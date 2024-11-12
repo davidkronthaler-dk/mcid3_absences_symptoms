@@ -1,0 +1,1176 @@
+---
+title: 'Respiratory viruses and school absenteeism: a longitudinal field study'
+author: "David Kronthaler"
+date: "2024-05-17"
+output:
+  word_document:
+    toc: true
+  pdf_document:
+    toc: true
+  html_document:
+    fig_caption: true
+    code_folding: hide
+    highlight: tango
+    theme: yeti
+    toc: true
+    toc_float: true
+header-includes: \usepackage{setspace}
+editor_options:
+  chunk_output_type: console
+---
+
+```{r Setup, include=FALSE}
+## Setup #----------------------------------------------------------------------
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+
+# Packages #--------------------------------------------------------------------
+require(tidyverse)
+require(patchwork)
+require(multcomp)
+require(ggrepel)
+require(gridExtra)
+require(grid)
+require(reshape2)
+require(DescTools)
+require(wesanderson)
+require(flexsurv)
+require(cowplot)
+# #devtools::install_github("ricardo-bion/ggradar", dependencies = TRUE)
+require(ggradar)
+require(tableone)
+
+# Setup for coloring #----------------------------------------------------------
+# Respiratory viruses levels
+pathgs <- c("IFA", "IFB", "HRV", "AdV", "PIV", "RSV", "HCoV-OC43", "HCoV-229E")
+cols <- wes_palette("IsleofDogs1")
+cols <- c(
+  wes_palette("Rushmore1")[3],
+  cols[-c(4, 5)],
+  wes_palette("GrandBudapest2")[4],
+  wes_palette("FantasticFox1")[c(4, 5)]
+)
+names(cols) <- pathgs
+
+# Respiratory viruses labels
+pathgs.labels <- c("IAV", "IBV", "HRV", "AdV", "PIV", "RSV", "HCoV-OC43","HCoV-229E")
+cols.labels <- cols
+names(cols.labels) <- pathgs.labels
+
+# Language settings #-----------------------------------------------------------
+Sys.setlocale("LC_TIME", "en_US.UTF-8")
+
+# Load data #-------------------------------------------------------------------
+# Data: Recorded school absences
+abs_sus <- read.csv("../data-clean/redcap/absences_sus.csv")
+# Data: Saliva samples
+sal_res <- read.csv("../data-clean/molecular/positive-saliva-student-list.csv")
+test_res <- read.csv("../data-clean/molecular/saliva-results.csv")
+# Data: Social survey
+soc_res <- read.csv("../data-clean/survey/social-survey-results.csv")
+
+# Source functions #------------------------------------------------------------
+source("fct_descr_analysis.R")
+
+# Source data preparation #-----------------------------------------------------
+source("dataprep_descr_analysis.R")
+```
+
+
+# Table 1: Description of study population
+
+```{r Table 1}
+## Columns of Table 1: Overall, Class 1, Class 2, Class 3, Class 4 #------------
+
+## Frequency of students by sex and class #-------------------------------------
+soc_res %>%
+  filter(time == "Baseline", student_id %in% test_res$student_id) %>%
+  mutate(Class = factor(substr(student_id, 1, 1), 
+                        levels = c("A", "B", "C", "D"),
+                        labels = c("Class 1", "Class 2", "Class 3", "Class 4"))) %>%
+  dplyr::select(sex, Class) %>%
+  CreateTableOne(.,vars = c("sex"), strata = "Class", 
+                 test = FALSE,  addOverall = TRUE)
+
+## Frequency and type of school absences #--------------------------------------
+CreateTableOne(
+  data = abs_sus %>%
+    filter(student_id %in% test_res$student_id) %>%
+    mutate(symp_respir = as.factor(symp_respir),
+           class = factor(substr(student_id, 1, 1),
+                          levels = c("A", "B", "C", "D"),
+                          labels = c("Class 1", "Class 2", "Class 3", "Class 4")),
+           sick_with_resp = as.factor(if_else(reason == "sickness" & 
+                                                symp_respir == 1, 1, 0)),
+           sick_wo_resp = as.factor(if_else(reason == "sickness" & 
+                                              symp_respir == 0, 1, 0)),
+           other_vocal = as.factor(if_else(reason == "other" | 
+                                             reason == "vocational", 1, 0))),
+  strata = "class", addOverall = TRUE,
+  vars = c("sick_with_resp", "sick_wo_resp", "other_vocal"), test = FALSE)
+
+## Frequency of positive saliva tests #-----------------------------------------
+CreateTableOne(
+  data = viral_loads %>%
+    dplyr::select(student_id, pathogen) %>%
+    mutate(pathogen = factor(pathogen, levels = pathgs),
+           class = factor(substr(student_id, 1, 1))),
+  strata = "class", vars = c("pathogen"),
+  addOverall = TRUE, test = FALSE)
+
+## Frequency of positive students #---------------------------------------------
+nrow(viral_loads %>%
+     dplyr::select(student_id) %>% distinct())
+viral_loads %>%
+ mutate(class = factor(substr(student_id, 1, 1))) %>%
+ group_by(class) %>%
+ summarise(distinct_students = n_distinct(student_id)) %>%
+ ungroup() %>%
+ as.data.frame() %>%
+ `rownames<-`(NULL)
+
+## Frequency of tests by class #------------------------------------------------
+test_res %>%
+  filter(test_refused == FALSE & !is.na(pathogen_1)) %>%
+  group_by(class) %>%
+  summarise(n = n()) %>%
+  ungroup()
+```
+
+
+# Figure 1: Distribution of positive saliva tests and positivity periods
+
+```{r warning=FALSE, message=FALSE}
+## Distribution of positive saliva tests and positivity periods #---------------
+# Positive saliva tests
+figure_1_a <- viral_loads %>%
+  group_by(pathogen) %>%
+  summarise(n = n()) %>%
+  mutate(csum = rev(cumsum(rev(n))),
+         pos = n/2 + lead(csum, 1) + 0.1,
+         pos = if_else(is.na(pos), n/2, pos)) %>%
+  ggplot(aes(x = "" , y = n, fill = pathogen)) +
+  geom_col(width = 1, color = 1, alpha = 0.7) +
+  coord_polar(theta = "y") +
+  scale_fill_manual(values = cols) +
+  geom_text_repel(aes(x = 1.48, y = pos, 
+                    label = pathgs.labels),
+                size = 3, nudge_x = 0.36, show.legend = FALSE,
+                segment.size = 0.5, segment.color = "black",
+                direction = "y") +
+  geom_text(aes(y = pos, label = paste0(n, " (", round(n/sum(n) * 100,
+                                     0),  "%)")),
+            size = 2.2, nudge_x = 0.32, show.legend = FALSE) +
+  labs(
+    caption = "Number (%) of positive tests",
+    title = "a"
+  ) +
+  theme_void() +
+    theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    plot.margin = margin(0, 0, 10, 0),
+    plot.caption = element_text(hjust = 0.5, 
+                                vjust = 10, size = 8, 
+                                margin = margin(t = 10),
+                                face = "plain"),
+    title = element_text(size = 8, face = "bold"))
+
+# Positivity periods
+figure_1_b <- infectious_periods_IC %>% 
+  group_by(infectious_period) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  group_by(pathogen) %>%
+  summarise(n = n()) %>%
+  mutate(csum = rev(cumsum(rev(n))),
+         pos = n/2 + lead(csum, 1) + 0.1,
+         pos = if_else(is.na(pos), n/2, pos)) %>%
+  ggplot(aes(x = "" , y = n, fill = pathogen)) +
+  geom_col(width = 1, color = 1, alpha = 0.7) +
+  coord_polar(theta = "y") +
+  scale_fill_manual(values = cols) +
+  geom_text_repel(aes(x = 1.48, y = pos, label = pathgs.labels),
+                   size = 3, nudge_x = 0.36, show.legend = FALSE,
+                   segment.size = 0.5, segment.color = "black",
+                   direction = "y") +
+  geom_text(aes(y = pos, 
+                label = paste0(n, " (", round(n / sum(n) * 100, 0),
+                                    "%)")),
+            size = 2.2, nudge_x = 0.27, show.legend = FALSE) +
+  labs(
+    caption = "Number (%) of infection episodes",
+    title = "b"
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    plot.margin = margin(0, 0, 10, 0),
+    plot.caption = element_text(hjust = 0.5, 
+                                vjust = 10, size = 8, 
+                                margin = margin(t = 10),
+                                face = "plain"),
+    title = element_text(size = 8, face = "bold"))
+
+## Save Figure 1 #-------------------------------------------------------------
+jpeg("../Figures/figure1.jpeg", width = 16, height = 10, units = 'cm', 
+     res = 1000)
+figure_1_a + figure_1_b +
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "none",
+        legend.key.size = ggplot2::unit(0.4,"cm"))
+dev.off()
+```
+¨
+
+# Figure 2: Temporal distribution of positive saliva tests overall and by class
+
+```{r}
+## Positive saliva tests over time #--------------------------------------------
+# Dates for x-axis
+days_plot <- c(unique(viral_loads$date)[order(unique(viral_loads$date))][1:6], 
+               "2024-02-07", 
+               unique(viral_loads$date)[order(unique(viral_loads$date))][7:18]) %>%
+  as.Date(origin = "1970-01-01") %>%
+  format("%b %d")
+days_plot[is.na(days_plot)] <- ""
+
+## Figure 2a: Overall #---------------------------------------------------------
+figure_2_a <- viral_loads %>%
+  mutate(class_id = substr(student_id, 1, 1),
+         pathogen  = factor(pathogen, 
+                            levels = rev(pathgs),
+                            labels = rev(pathgs.labels)
+                            ),
+         time_id = ifelse(as.numeric(time_id) > 6,
+                                     as.numeric(time_id) + 1,
+                                     as.numeric(time_id))) %>%
+  group_by(time_id, pathogen) %>%
+  summarize(no_inf = n()) %>%
+  bind_rows(data.frame(time_id = 7, 
+                       pathogen = NA, 
+                       no_inf = 0)) %>%
+  ggplot(aes(x = time_id, y = no_inf, fill = pathogen)) +
+    geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c(rev(cols.labels)),
+                    na.translate = FALSE) +
+  labs(
+    x = "", y = "",
+    title = "a"
+  ) +
+  scale_x_continuous(breaks = 1:19, labels = days_plot) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+    legend.title = element_blank(),
+    title = element_text(size = 8, face = "bold"),
+    panel.grid.minor.x = element_blank(),
+    legend.position = "bottom") + 
+  annotate("rect", xmin = 6.5, 
+           xmax = 7.5,
+           ymin = 0, ymax = Inf,
+           fill = "darkgray", alpha = 0.5)+
+  # add vertical text in box
+  annotate("text", x = 7, y = 13, 
+           label = "1-week vacation", 
+           vjust = 0.5, hjust = 0.8, color = "black",
+           size = 3, angle = 90) +
+  guides(fill = guide_legend(nrow =1, reverse = TRUE))
+
+## Figure 2b: Stratified by Class #---------------------------------------------
+figure_2_b <- viral_loads %>%
+  mutate(class_id = as.factor(paste("Class", substr(student_id, 1, 1))),
+         pathogen  = factor(pathogen, levels = rev(pathgs),
+                            labels = rev(pathgs.labels)
+                            ),
+         time_id = ifelse(as.numeric(time_id) > 6,
+                          as.numeric(time_id) + 1,
+                          as.numeric(time_id))) %>%
+  group_by(time_id, pathogen, class_id) %>%
+  summarize(no_inf = n(), .groups = 'drop') %>%
+  bind_rows(expand.grid(time_id = 7, 
+                        pathogen = NA, 
+                        no_inf = 0, 
+                        class_id = unique(paste("Class", substr(viral_loads$student_id, 1, 1))))) %>%
+  mutate(class_id = recode_factor(class_id,
+                                  "Class A" = "Class 1",
+                                  "Class B" = "Class 2",
+                                  "Class C" = "Class 3",
+                                  "Class D" = "Class 4")) %>%
+  ggplot(aes(x = time_id, y = no_inf, fill = pathogen)) +
+  facet_wrap(~class_id) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c(rev(cols.labels)),
+                    na.translate = FALSE) +
+  labs(
+    x = "", y = "",
+    title = "b"
+  ) +
+  scale_x_continuous(breaks = c(1:19)[seq(1, 19, by = 2)],
+                     labels = days_plot[seq(1, 19, by = 2)]) + 
+  scale_y_continuous(breaks = c(0, 5, 10),
+                     labels = c(0, 5, 10)) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+    legend.title = element_blank(),
+    legend.position = "bottom",
+    title = element_text(size = 8, face = "bold"),
+    strip.text = element_text(size = 8, face = "plain", vjust = 1),
+    panel.grid.minor.x = element_blank()
+    ) +
+  annotate("rect", xmin = 6.5, 
+           xmax = 7.5,
+           ymin = 0, ymax = 10,
+           fill = "darkgray", alpha = 0.5) +
+  annotate("text", x = 7, y = 8, 
+           label = "1-week vacation", 
+           vjust = 0.42, hjust = 1, color = "black",
+           size = 2.75, angle = 90) +
+  guides(fill = guide_legend(nrow =1, reverse = TRUE))
+
+
+## Save Figure 2 #--------------------------------------------------------------
+figure_2 <- (figure_2_a / figure_2_b ) + 
+  plot_layout(guides = "collect", axis_title = "collect",
+              heights = c(1,1)) &
+  theme(legend.position = "bottom",
+        legend.key.size = ggplot2::unit(0.4,"cm"),
+        legend.text = element_text(size = 8),
+        plot.margin = ggplot2::unit(c(0,0,0,-0.2), "cm"),
+        )
+y_axis_title <- ggdraw() + draw_label("Number of positive tests", 
+                                      angle = 90, vjust = 0.8,
+                                      size = 8)
+jpeg("../Figures/figure2.jpeg", width = 18, height = 20, units = 'cm',
+     res = 1000)
+plot_grid(y_axis_title, figure_2, 
+          ncol = 2, 
+          rel_widths = c(0.03, 1))
+dev.off()
+```
+
+
+## Supplements: Temporal distribution of positive saliva tests by gender
+
+```{r}
+## Temporal distribution of positive saliva tests by gender #-------------------
+temporalD_gender <- viral_loads %>%
+  mutate(class_id = substr(student_id, 1, 1),
+         pathogen  = factor(pathogen, levels = rev(pathgs),
+                            labels = rev(pathgs.labels)),
+         time_id = ifelse(as.numeric(time_id) > 6,
+                          as.numeric(time_id) + 1,
+                          as.numeric(time_id))) %>%
+  group_by(time_id, pathogen, gender) %>%
+  summarize(no_inf = n(), .groups = 'drop') %>%
+  bind_rows(data.frame(time_id = 7, 
+                       pathogen = NA, 
+                       no_inf = 0, 
+                       gender = unique(viral_loads$gender))) %>%
+  mutate(gender = recode_factor(gender, "female" = "Female",
+                                "male" = "Male")) %>%
+  ggplot(aes(x = time_id, y = no_inf, fill = pathogen)) +
+  facet_wrap(~gender) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c(rev(cols.labels)),
+                    na.translate = FALSE) +
+  labs(
+    x = "", y = "",
+    title = ""
+  ) +
+  scale_x_continuous(breaks = c(1:19)[seq(1, 19, by = 2)],
+                     labels = days_plot[seq(1, 19, by = 2)]) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+    legend.title = element_blank(),
+    legend.position = "bottom",
+    title = element_text(size = 8, face = "bold"),
+    strip.text = element_text(size = 8, face = "plain", vjust = 1),
+    panel.grid.minor.x = element_blank()
+  ) +
+  annotate("rect", xmin = 6.5, 
+           xmax = 7.5,
+           ymin = 0, ymax = Inf,
+           fill = "darkgray", alpha = 0.5) +
+  annotate("text", x = 7, y = 11.5, 
+           label = "1-week vacation", 
+           vjust = 0.45, hjust = 1, color = "black",
+           size = 2.75, angle = 90) +
+  guides(
+    fill = guide_legend(nrow = 1, reverse = TRUE)
+  )
+
+jpeg("../Figures/temporalDistribution_gender.jpeg",
+     width = 16, height = 10, units = "cm",
+     res = 1000
+)
+temporalD_gender
+dev.off()
+```
+
+## Supplements: Barplot and comparisons of Ct-values across pathogens
+
+```{r echo=FALSE, include=FALSE}
+## Errorbar plot for Ct-values including standard errors #----------------------
+CT_barplot <- infectious_periods_IC %>%
+  # Data only considering lowest Ct value per positivity period to not introduce bias
+  # due to multiple measurements per person
+  group_by(infectious_period) %>%
+  arrange(ct) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  # Plot
+  group_by(pathogen) %>%
+  summarise(
+    mean_ct = mean(ct), sd_ct = sd(ct), n = n()
+  ) %>%
+  ungroup() %>%
+  mutate(pathogen = factor(pathogen, levels = pathgs, labels = pathgs.labels)) %>%
+  ggplot(aes(
+    x = pathogen,
+    y = mean_ct,
+    fill = pathogen
+  )) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_errorbar(
+    aes(
+      ymin = mean_ct - sd_ct/sqrt(n),
+      ymax = mean_ct + sd_ct/sqrt(n)
+    ),
+    width = 0.2
+  ) +
+  scale_fill_manual(values = cols.labels) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(
+    y = "Ct value",
+    title = "a"
+  ) +
+  coord_cartesian(ylim = c(20,38)) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    legend.position = "none",
+    axis.text = element_text(size = 8),
+    title = element_text(size = 8, face = "bold"),
+    axis.title.y = element_text(size = 8, face = "plain"),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+## Modeling Ct-values #---------------------------------------------------------
+# using linear regression on respiratory virus adjusted for gender
+# considering only lowest Ct value per positivity period
+ME.mod <- lm(ct ~ pathogen + gender, data = infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  arrange(ct) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  dplyr::select(pathogen, ct, gender))
+
+# Model assumptions check
+plot(fitted(ME.mod), resid(ME.mod),
+  xlab = "Fitted values", ylab = "Residuals",
+  main = "Tuket-Anscombe Plot", col = "darkblue", pch = 20
+)
+abline(h = 0, col = "black", lty = 2)
+lw <- lowess(fitted(ME.mod), resid(ME.mod))
+lines(lw$x, lw$y, col = "red", lwd = 1, lty = 1)
+
+par(mfrow = c(1, 2), las = 1)
+qqnorm(resid(ME.mod),
+  pch = 20, cex = 1.2,
+  col = "darkblue", main = "Normal Q-Q Plot for residuals",
+  cex.main = 0.8, cex.lab = 0.8
+)
+qqline(resid(ME.mod))
+hist(resid(ME.mod), col = "darkblue", main = "Histogram of residuals", 
+     xlab = "Residuals", breaks = "fd", prob = T)
+par(mfrow = c(1, 1))
+
+# F-test
+anova(ME.mod)
+
+# Posthoc tests using linear contrasts
+posthoc <- glht(ME.mod, linfct = mcp(pathogen = "Tukey"))
+posthoc.sum <- summary(posthoc, test = adjusted("none"))
+
+# Extract differences
+CT_diff <- as.data.frame(posthoc.sum$test$coefficients) %>%
+  rename(diff = `posthoc.sum$test$coefficients`) %>%
+  mutate(p_value = posthoc.sum$test$pvalues)
+
+# Data for heatmap of Ct differences below
+CT_diff <- CT_diff %>%
+  mutate(
+    pathogen_1 = str_split(rownames(CT_diff), " - ", 
+                           simplify = T)[, 1],
+    pathogen_2 = str_split(rownames(CT_diff), " - ", 
+                           simplify = T)[, 2],
+    sign = sapply(CT_diff$p_value, signif_code),
+    diff_sign = as.character(paste0(round(CT_diff$diff, 1),
+                                    sign))
+  ) %>%
+  arrange(match(pathogen_1, c("HCoV-229E", "HCoV-OC43", "RSV", 
+                              "PIV", "AdV", "HRV", "IFB")))
+## Heatmap of pairwise comparisons in Ct-values #-------------------------------
+Ct_heatmap <- CT_diff %>%
+  mutate(
+    pathogen_1 = factor(pathogen_1, 
+                        levels = pathgs,
+                        labels = pathgs.labels),
+    pathogen_2 = factor(pathogen_2, 
+                        levels = pathgs,
+                        labels = pathgs.labels)) %>%
+  ggplot(aes(x = pathogen_1, y = pathogen_2)) +
+  geom_tile(aes(fill = diff), color = "white") +
+  scale_fill_gradient2(
+    low = "#1E90FF", mid = "#D3D3D3", 
+    high = "#FF3030", midpoint = 0,
+    name = "Mean difference in Ct value   ", 
+    breaks = c(6,4,2,0,-2,-4, 6),
+  ) +
+  geom_text(aes(label = diff_sign), size = 2.5) +
+  theme_minimal(base_size = 14) +
+  labs(x = "", y = "",
+       title = "b") +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
+    axis.text.y = element_text(size = 8, margin = margin(r = -5)), 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    legend.position = "top",
+    legend.direction = "horizontal",
+    legend.key.size = ggplot2::unit(0.5, "cm"),
+    legend.title = element_text(size = 8, face = "plain"),
+    legend.text = element_text(size = 8),
+    title = element_text(size = 8, face = "bold"),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+## Save Supplementary Figure #--------------------------------------------------
+jpeg("../Figures/S1_CT.jpeg",
+     width = 18, height = 20, units = "cm",
+     res = 1000)
+CT_barplot/ plot_spacer() /  Ct_heatmap +
+  plot_layout(heights = c(1,0.1, 1)) +
+  theme(plot.margin = margin(0, -5, 0, 0))
+dev.off()
+```
+
+
+## Comparison of length of absence periods with and without respiratory virus
+
+```{r}
+## Length of absence periods #--------------------------------------------------
+# Calculation of confidence intervals for length of absence periods with/without
+# matched respiratory virus
+surv_abs_novsyespatho <- absence_viral %>%
+  rename(observed = days_absent) %>%
+  mutate(possible = ifelse(date_return %in% Mondays[,1], -2, 0)) %>%
+  mutate(possible = ifelse(date_return == "2024-02-12", possible - 7, 0),
+         pathogen = ifelse(pathogen == "No pathogen", "No pathogen", "Pathogen")) %>%
+  dplyr::select(observed, possible, pathogen) %>%
+  mutate(pathogen = relevel(factor(pathogen, levels = c("No pathogen", "Pathogen")),
+                            ref = "No pathogen"))
+
+# Parametric model (gompertz distr. -> proportional hazards)
+par_abs_novsyespathog <- flexsurvreg(Surv(observed + possible, observed, 
+                                          type = "interval2") ~ pathogen, 
+                                          data = surv_abs_novsyespatho,
+                                          dist = "gompertz")
+
+# Summary table 
+tidy(par_abs_novsyespathog, conf.int = TRUE, transform = "coefs.exp") # p-values
+predict(par_abs_novsyespathog, 
+        newdata = data.frame(pathogen = c("No pathogen", "Pathogen")), 
+        conf.int = T, level = 0.95) # 95% CI
+```
+
+
+## Supplements: Boxplot for absence times due to respiratory infections
+
+```{r}
+## Boxplot of length of absence periods #---------------------------------------
+boxplot_absences <- absence_viral %>%
+  # No absence periods for HCoV-229E recorded
+  # include NA for HCoV-229E, so it is included on the x-axis
+  bind_rows(
+    # use a dummy for plotting
+    absence_viral[1, ] %>%
+      mutate(pathogen = "HCoV-229E",
+             days_absent = NA)
+  ) %>%
+  filter(pathogen != "No pathogen") %>%
+  mutate(pathogen = factor(pathogen, levels = pathgs,
+                           labels = pathgs.labels)) %>%
+  ggplot(aes(x = pathogen, y = days_absent)) +
+  geom_boxplot(fill = cols[-8]) +
+  labs(
+    x = "", 
+    y = "Absence period (days)",
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 0, 
+                               hjust = 0.5, 
+                               size = 8),
+    axis.title.y = element_text(size = 8, face = "plain"),
+    title = element_text(size = 8, face = "bold"),
+    legend.position = "none",
+    plot.margin = margin(5,5,5,5)
+  ) +
+  scale_y_continuous(breaks = seq(0, 15, by = 2))
+jpeg("../Figures/S3_boxplot_absences.jpeg",
+     width = 16, height = 10, units = "cm",
+     res = 1000
+)
+boxplot_absences
+dev.off()
+```
+
+
+# Figure 3b: Proportion of positivity periods with absences
+
+```{r warning=FALSE, message=FALSE}
+## Proportion plot of positivity periods with associated absences #-------------
+# considered are absences with associated viral infection
+figure_3b <- infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  mutate(absence_yes = as.numeric(possible > 0 & type_absence == "viral")) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  group_by(pathogen) %>%
+  summarise(
+    n = sum(absence_yes),
+    prop = round(n/n(), 2),
+    N = n()
+  ) %>%
+  mutate(lwr = BinomCI(x = n, n = N,
+                       method = "wilson", conf.level = 0.95)[,2],
+         upr = BinomCI(x = n, n = N,
+                       method = "wilson", conf.level = 0.95)[,3],
+         pathogen = factor(pathogen, levels = pathgs,
+                           labels = pathgs.labels)) %>%
+  ggplot(aes(x = pathogen, y = prop, col = pathogen)) +
+  # Add errorbars
+  geom_errorbar(aes(ymin = lwr, ymax = upr),
+                width = 0.4, size =1) + 
+  # Add estimates of CI boundaries above/below errorbars
+  geom_text(aes(y = upr + 0.045001, label = round(upr * 100, 0)), size = 3.2) +
+  geom_text(data = .%>% filter(pathogen != "HCoV-229E"),
+            aes(y = lwr - 0.045001, label = round(lwr * 100, 0)), size = 3.2) +
+  # geom_point(size = 3) +
+  geom_tile(aes(width = 0.4, height = 0.09), 
+            size = 0.9,
+            fill = "white", color = cols) +
+  # Add point estimates within squares
+  geom_text(aes(label = round(prop * 100, 0)), size = 3.2) +
+  scale_color_manual(values = cols) +
+  theme_minimal() +
+  labs(
+    x = "", y = "Infections with absences (%)",
+    title = "b"
+  ) +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
+    axis.title.y = element_text(size = 8, face = "plain"),
+    legend.position = "none",
+    title = element_text(size = 8, face = "bold")
+  ) +
+  scale_y_continuous(limits = c(-0.045, 1.03), 
+                     breaks = seq(0, 1, by = 0.2), 
+                     labels = paste0(seq(0, 100, by = 20), "%"))
+```
+
+
+## Supplements: Survival analysis for days absent
+
+```{r}
+## Survival analysis for days absent #------------------------------------------
+# Survival data construction considering interval-censoring
+absence_viral_surv <- absence_viral %>%
+  rename(observed = days_absent) %>%
+  mutate(possible = ifelse(date_return %in% Mondays[,1], -2, 0)) %>%
+  mutate(possible = ifelse(date_return == "2024-02-12", possible - 7, 0)) %>%
+  filter(pathogen != "No pathogen") %>%
+  dplyr::select(observed, possible, pathogen) %>%
+  mutate(pathogen = relevel(factor(pathogen, levels = pathgs[-8]), 
+                            ref = "AdV"))
+
+# Parametric model (gompertz distr. -> proportional hazards)
+abs_par <- flexsurvreg(Surv(observed + possible, observed, 
+                            type = "interval2") ~ pathogen, 
+                       data = absence_viral_surv,
+                       dist = "gompertz")
+
+# Summary table
+tidy(abs_par, conf.int = TRUE, transform = "coefs.exp") # p-values
+
+# Prediction for each pathogen
+new.data <- data.frame(pathogen = factor(c("IFA", "IFB", "HRV", "AdV", 
+                                           "PIV", "RSV", "HCoV-OC43"),
+                                         levels = c("IFA", "IFB", "HRV", 
+                                                    "AdV", "PIV", "RSV", 
+                                                    "HCoV-OC43")))
+# Graphical display
+jpeg("../Figures/S3_survival_absent_days.jpeg",
+     width = 16, height = 12, units = "cm",
+     res = 1000
+)
+par(las = 1, xaxs = "i", yaxs = "i",
+     mgp = c(2.5, 1, 0),
+     mar = c(4.1, 3.8, 0.5, 0.5))
+plot(abs_par, newdata = new.data, 
+     col = cols[levels(new.data$pathogen)], 
+     col.obs = rgb(0, 0, 0, alpha = 0),
+     t = seq(0, 10, by = 0.01),
+     xlab = "Days since first absence", ylab = "Probability of being absent (%)",
+     lwd = 2, main = "",
+     yaxt = "n",
+     cex.lab = 0.8)
+axis(side = 2, at = seq(0, 1, by = 0.2), labels =seq(0, 1, by = 0.2) * 100)
+legend(x = "topright", col = cols[levels(new.data$pathogen)], 
+       cex = 0.8,
+       legend = pathgs.labels[-8],
+       lwd = 2)
+dev.off()
+```
+
+# Figure 3c: Absence periods confidence intervals
+
+```{r}
+## 95%-confidence intervals length of absence periods by respiratory virus #----
+figure_3c <- data.frame(
+  # Confidence intervals for prediction from survival model
+  cbind(predict(abs_par, newdata = new.data, conf.int = T), 
+        new.data$pathogen)
+  ) %>%
+  # Truncation for plot, as this is a conditional absence time, so it must be at least
+  # 1 day long
+  mutate(.pred_lower = ifelse(.pred_lower < 1, 1, .pred_lower)) %>%
+  # Include HCoV-229E, for which no absence period with symptoms recorded, on x-axis, without values
+  bind_rows(
+    data.frame(
+      .pred_time = NA,
+      .pred_lower = NA,
+      .pred_upper = NA,
+      new.data.pathogen = "HCoV-229E"
+    )
+  ) %>%
+  # Arrange for consistent ordering in plot
+  mutate(new.data.pathogen = factor(new.data.pathogen, 
+                                   levels = pathgs,
+                                   labels = pathgs.labels)) %>%
+  # Plotting
+  ggplot(aes(x = new.data.pathogen, y = .pred_time, col = new.data.pathogen)) +
+  # Errorbars
+  geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper),
+                width = 0.4, size = 1) + 
+  # Add estimates of CI boundaries above/below errorbars
+  geom_text(aes(y = .pred_upper + 0.3, 
+                label = round(.pred_upper, 1)), size = 3.2) +
+  geom_text(aes(y = .pred_lower - 0.3, 
+                label = round(.pred_lower, 1)), size = 3.2) +
+  # Add tiles for point estimates
+  geom_tile(aes(width = 0.4, height = 0.6), 
+            size = 0.9, fill = "white", color = cols) +
+  # Add point estimates within squares (rounded to 1 decimal)
+  geom_text(aes(label = round(.pred_time, 1)), size = 3.2) +
+  # Formatting 
+  scale_color_manual(values = cols.labels) +
+  theme_minimal() +
+  labs(
+    x = "", y = "Absence period (days)",
+    title = "c"
+  ) + 
+  ylim(NA, 8) +
+  scale_y_continuous(breaks = seq(1, 7, by = 2)) +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
+    axis.title.y = element_text(size = 8, face = "plain"),
+    legend.position = "none",
+    title = element_text(size = 8, face = "bold")
+  )
+```
+
+## Supplements: Boxplot for length of positivity periods
+
+```{r}
+## Length of interval-censored positivity period by respiratory virus #---------
+boxplot_pp <- infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  filter(row_number() == 1) %>%
+  mutate(pathogen = factor(pathogen, levels = pathgs,
+                           labels = pathgs.labels)) %>%
+  # 1. If Positivity periods at the beginning, or end
+  # 2. observed + possible < IC_pred
+  # -> Increase possible s.t. observed + possible = IC_pred
+  #mutate(possible = ifelse(observed + possible < IC_pred[pathogen], 
+  #                        IC_pred[pathogen] - observed, possible)) %>%
+  ungroup() %>%
+  ggplot(aes(pathogen, observed + possible, fill = pathogen)) +
+  geom_boxplot() +
+  scale_color_manual(values = cols.labels) +
+  scale_fill_manual(values = cols.labels) +
+  labs(
+    x = "", y = "Positivity period (days)",
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    title = element_text(hjust = 0, face = "bold", size = 8),
+    axis.text.x = element_text(angle = 0, hjust = 0.5, size = 8),
+    axis.title.y = element_text(size = 8, hjust = 0.5,
+                                face = "plain")
+  ) +
+    scale_y_continuous(breaks = c(1,10,20,30))
+
+jpeg("../Figures/S2_boxplot_PPs.jpeg", 
+     width = 16, height = 10,
+     units = 'cm', res = 1000)
+boxplot_pp
+dev.off()
+```
+
+## Supplements: Survival Analysis for Positivity Periods
+
+```{r}  
+## Model the length of the positivity period #----------------------------------
+# Censoring indicator: 0 = right-censored, 1 = observed, 3 = interval-censored
+# Observed: observed length of positivity period
+# Possible: possible length of positivity period, no saliva sampling due to absences
+
+# Definition of censoring indicator
+# Right-censored if at beginning or end of the study
+SurvDataPP <- infectious_periods_IC %>%
+  mutate(censoring_indicator = ifelse(date == "2024-01-22", 0,                  
+                                      ifelse(date == "2024-03-08", 0, 
+                                             ifelse(substr(student_id, 1, 1) == "D" &
+                                                      date == "2024-03-01", 0,
+                                                    ifelse(possible > 0, 3, 1))))) %>%
+  group_by(infectious_period) %>%
+  arrange(desc(censoring_indicator == 3),      # Interval-censored
+          desc(censoring_indicator == 0),      # Right-censored
+          desc(censoring_indicator == 1)) %>%  # Exact
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  dplyr::select(censoring_indicator, observed, possible, pathogen) %>%
+  mutate(pathogen = relevel(factor(pathogen, levels = pathgs), ref = "PIV"),
+         possible = ifelse(censoring_indicator == 3, possible, 0))
+
+# Parametric model (gompertz distribution -> proportional hazards)
+mod.PP <- flexsurvreg(Surv(time = observed,
+                           time2 = observed + possible,
+                           event = censoring_indicator,
+                           type = "interval") ~ pathogen, 
+                      data = SurvDataPP, dist = "gompertz")
+
+# Summary table (supplements)
+tidy(mod.PP, conf.int = TRUE, transform = "coefs.exp") # p-values
+
+# Prediction for each pathogen
+new.data <- data.frame(pathogen = factor(pathgs, levels = pathgs))
+
+# Confidence intervals for prediction of absence period length
+pp_predicted_ci <- data.frame(cbind(predict(mod.PP, newdata = new.data,
+                                            conf.int = T),
+                                    new.data$pathogen)
+                              ) 
+# Results text
+round(pp_predicted_ci[pp_predicted_ci$new.data.pathogen == "IFB", 1:3],2)
+
+# Graphical display
+jpeg("../Figures/S2_survival_positivityperiod.jpeg",
+     width = 16, height = 12, units = "cm",
+     res = 1000
+)
+par(las = 1, xaxs = "i", yaxs = "i",
+     mgp = c(2.5, 1, 0),
+     mar = c(4.1, 3.8, 0.5, 0.5))
+plot(mod.PP, newdata = new.data, 
+     col = cols[levels(new.data$pathogen)], 
+     col.obs = rgb(0, 0, 0, alpha = 0),
+     t = seq(0, 22, by = 0.01),
+     xlab = "Days since first positive test", ylab = "Probability of being positive (%)",
+     lwd = 2, main = "",
+     yaxt = "n",
+     cex.lab = 0.8)
+axis(side = 2, at = seq(0, 1, by = 0.2), labels =seq(0, 1, by = 0.2) * 100)
+legend(x = "topright", col = cols[levels(new.data$pathogen)], 
+       cex = 0.8,
+       legend = pathgs.labels,
+       lwd = 2)
+dev.off()
+```
+
+# Figure 3a: Cofidence intervals of estimated positivity periods
+
+```{r}
+## Plot 95% confidence intervals for lengths of estimated positivity periods #--
+figure_3a <- pp_predicted_ci %>%
+  # Arrange for consistent ordering in plot
+  mutate(new.data.pathogen = factor(new.data.pathogen, 
+                                    levels = pathgs,
+                                    labels = pathgs.labels)) %>%
+  # Plotting
+  ggplot(aes(x = new.data.pathogen, y = .pred_time, col = new.data.pathogen)) +
+  # Errorbars
+  geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper),
+                width = 0.4, size = 1) + 
+  # Add estimates of CI boundaries above/below errorbars
+  geom_text(aes(y = .pred_upper + 0.9, 
+                label = round(.pred_upper, 1)), size = 3.2) +
+  geom_text(aes(y = .pred_lower - 0.9, 
+                label = round(.pred_lower, 1)), size = 3.2) +
+  # Add tiles for point estimates
+  geom_tile(aes(width = 0.4, height = 1.6), 
+            size = 0.9, fill = "white", color = cols) +
+  # Add point estimates within squares (rounded to 1 decimal)
+  geom_text(aes(label = round(.pred_time, 1)), size = 3.2) +
+  # Formatting 
+  scale_color_manual(values = cols) +
+  theme_minimal() +
+  labs(
+    x = "", y = "Positivity period (days)",
+    title = "a"
+  ) +
+  # ylim(NA, NA) +
+  scale_y_continuous(breaks = seq(1, 16, by = 3)) +
+  # scale_y_continuous(limits = c(1, NA), expand = expansion(add = c(0.9,0.5)),
+  #                    breaks = seq(1,16,3)) +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
+    axis.title.y = element_text(size = 8, face = "plain"),
+    legend.position = "none",
+    title = element_text(size = 8, face = "bold")
+  )
+
+## Save Figure 3 #--------------------------------------------------------------
+jpeg("../Figures/figure3.jpeg",
+     width = 18, height = 18,
+     units = 'cm', res = 1000)
+figure_3a/figure_3b/figure_3c +
+  theme(
+        plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
+dev.off()
+```
+
+
+# Figure 4: Radar plots of self-reported symptoms by pathogen
+
+```{r}
+## Radar plots of self-reported symptoms by pathogen #--------------------------
+# Apply normalization function to each column except "pathogen"
+symptoms_scaled <- symptoms %>%
+  mutate(across(-pathogen, normalize),
+         pathogen = factor(pathogen, levels = pathgs)) %>%
+  arrange(pathogen)
+
+# Create radar charts for each pathogen
+spider <- list()
+for (i in 1:nrow(symptoms_scaled)) {
+  radar_plot <- ggradar(symptoms_scaled[i,], group.colours = cols[i],
+                        group.point.size = 1,
+                        grid.min = 0, grid.mid = 0.5, grid.max = 1,
+                        base.size = 0.1,
+                        grid.label.size = 3,
+                        axis.label.size = 2.8,
+                        axis.label.offset = 1.2,
+                        gridline.label.offset = 0.1,
+                        gridline.mid.colour = "gray",
+                        plot.extent.x.sf = 2.1,
+                        fill = TRUE,
+                        group.line.width = 0.5,
+                        fill.alpha = 0.5,
+                        axis.labels = c("Fever", "Chills", 
+                                        "Limb pain", 
+                                        "Loss of taste", 
+                                        "Loss of smell", 
+                                        "Fatigue", "Cough",
+                                        "Runny nose", "Diarrhea",
+                                        "Sore throat", "Headache", 
+                                        "Shortness of breath", 
+                                        "Stomach pains")) +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(size = 8, face = "bold", hjust = 0.5),
+      axis.text = element_text(size = 6),
+      panel.grid = element_blank()
+    )
+  
+  # Create a title grob
+  title_grob <- textGrob(pathgs.labels[i], gp = gpar(fontsize = 8, fontface = "bold"))
+  
+  # Arrange the title and the plot with adjusted spacing
+  combined_plot <- arrangeGrob(
+    title_grob,
+    radar_plot,
+    ncol = 1,
+    heights = unit.c(grobHeight(title_grob) + ggplot2::unit(0.1, "line"), ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - ggplot2::unit(0.1, "line"))
+  )
+  
+  spider[[i]] <- combined_plot
+}
+
+# HCoV-229E (no matched absence, hence no symptoms recorded)
+radar_plot_8 <- data.frame(
+  pathogen = "HCoV-229E",
+  fever = 0, chills = 0, limb_pain = 0, loss_of_taste = 0, loss_of_smell = 0,
+  fatigue = 0, cough = 0, cold = 0, diarrhea = 0, sore_throat = 0,
+  headache = 0, shortness_of_breath = 0, stomach_pains = 0
+) %>%
+  ggradar(group.colours = "lightgray",
+          group.point.size = 0,
+          grid.min = 0, grid.mid = 0.5, grid.max = 1,
+          base.size = 0.000001,
+          grid.label.size = 3,
+          axis.label.size = 2.8,
+          gridline.label.offset = 0.0001,
+          gridline.mid.colour = "gray",
+          plot.extent.x.sf = 2.1,
+          fill = TRUE,
+          group.line.width = 0.000000001,
+          fill.alpha = 0,
+          axis.labels = c("Fever", "Chills", "Limb pain", 
+                          "Loss of taste", 
+                          "Loss of smell", "Fatigue", "Cough",
+                          "Runny nose", "Diarrhea",
+                          "Sore throat", "Headache", 
+                          "Shortness of breath", 
+                          "Stomach pains")) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 8, face = "bold", hjust = 0.5),
+    axis.text = element_text(size = 6),  
+    panel.grid = element_blank()
+  )
+
+title_grob_8 <- textGrob("HCoV-229E", gp = gpar(fontsize = 8, fontface = "bold"))
+
+combined_plot_8 <- arrangeGrob(
+  title_grob_8,
+  radar_plot_8,
+  ncol = 1,
+  heights = unit.c(grobHeight(title_grob_8) + ggplot2::unit(0.1, "line"), ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - ggplot2::unit(0.1, "line"))
+)
+
+spider[[8]] <- combined_plot_8
+
+## Save Figure 4 #--------------------------------------------------------------
+jpeg("../Figures/figure4.jpeg", width = 18, 
+     height = 20, units = 'cm', res = 1000)
+gridExtra::grid.arrange(grobs = spider, ncol = 2)
+dev.off()
+```
+
+## Supplements: Hierarchical Clustering by Self-Reported Symptoms
+
+```{r}
+## Hierarchical clustering #----------------------------------------------------
+# detect which pathogens are similar in self-reported symptoms
+par(las = 1)
+symptoms_hc <- symptoms %>%
+  mutate(pathogen = factor(pathogen, levels = pathgs, labels = pathgs.labels)) %>%
+  column_to_rownames(var = "pathogen") %>%
+  dist(method = "euclidian") %>%
+  hclust(method = "complete")
+
+jpeg("../Figures/S4_cluster_symptoms.jpeg", width = 16, 
+     height = 12, units = 'cm', res = 1000)
+plot(as.dendrogram(symptoms_hc), main = "",
+     xlab = "", ylab = "Distance", col = "black")
+dev.off()
+```
+
+## Fisher's exact test: Gender and respiratory viruses
+
+```{r}
+## Fishers exact test for association between gender and respiratory viruses #--
+# Infectious periods are only be counted once
+fisherTestData <- infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  filter(row_number() == 1) %>%
+  ungroup()
+tab.fish.gen <- table(fisherTestData$gender, 
+                      fisherTestData$pathogen)
+fisher.test(tab.fish.gen, simulate.p.value = TRUE)
+```
+
+## Fisher's exact test: Class and positivity periods
+
+```{r warning=FALSE, message=FALSE}
+## Fishers exact test for association between class and respiratory viruses #---
+tab.fish.class <- table(fisherTestData %>%
+                          mutate(class = substr(student_id, 1, 1)) %>%
+                          pull(class),
+                        fisherTestData$pathogen)
+# Fisher's exact test for 4x8 contigency table
+fisher.test(tab.fish.class, simulate.p.value = TRUE)
+```
+
+## Description of positivity periods
+
+```{r}
+## Number of infectious periods with only one positive test #-------------------
+infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  # Filter for groups containing only one row
+  filter(n() == 1) %>%
+  ungroup() %>%
+  { 
+    cat("Number of infectious periods with only one positive test:", nrow(.), "\n")
+  }
+  
+## Number of infectious periods with 2 positive tests #-------------------------
+infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  # Filter for groups containing more than one row
+  filter(n() == 2) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  { 
+    cat("Number of infectious periods with two positive tests:", nrow(.), "\n")
+  }
+
+## Number of infectious periods with 3 or more positive tests #-----------------
+infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  # Filter for groups containing more than one row
+  filter(n() >= 3) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  { 
+    cat("Number of infectious periods with three or more positive tests:", nrow(.), "\n")
+  }
+
+## All infectious period of length 8 positive tests #---------------------------
+infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  # Filter for groups containing more than one row
+  filter(n() == 8) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  { 
+    cat("Number of infectious periods with eight positive tests:", nrow(.), "\n")
+    cat("Pathogen:", pathgs[unique(.$pathogen)], "\n")
+  }
+
+## All infectious period of length 6 positive tests #---------------------------
+infectious_periods_IC %>%
+  group_by(infectious_period) %>%
+  # Filter for groups containing more than one row
+  filter(n() >= 6) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  { 
+    cat("Number of infectious periods with seven positive tests:", nrow(.), "\n")
+    cat("Pathogen:", pathgs[(.$pathogen)], "\n")
+  }
+```
+
