@@ -1172,5 +1172,30 @@ infectious_periods_IC %>%
     cat("Number of infectious periods with seven positive tests:", nrow(.), "\n")
     cat("Pathogen:", pathgs[(.$pathogen)], "\n")
   }
+
+## All coinfectious periods #----------------------------------------
+# Number of coinfections
+infectious_periods_IC %>%
+  group_by(student_id, time_id) %>%
+  filter(n() > 1) %>%
+  ungroup() %>%
+  pull(student_id) %>%
+  unique() %>%
+  length()
+
+# Display coinfections
+infectious_periods_IC %>%
+  group_by(student_id, time_id) %>%
+  filter(n() > 1) %>%
+  ungroup() %>%
+  dplyr::select(student_id, time_id, pathogen) %>%
+  distinct() %>%
+  arrange(student_id, time_id)
+
+# Infectious episodes by class
+infectious_periods_IC %>%
+  mutate(class = substr(student_id, 1, 1)) %>%
+  group_by(class) %>%
+  summarise(n = n_distinct(infectious_period))
 ```
 
