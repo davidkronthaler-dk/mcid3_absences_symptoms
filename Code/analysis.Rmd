@@ -1,5 +1,5 @@
 ---
-title: 'School absences and symptoms associated with respiratory viruses in a Swiss school: Longitudinal study with serial saliva sampling'
+title: 'Respiratory viruses and school absenteeism: a longitudinal field study'
 author: "David Kronthaler"
 date: "2024-05-17"
 output:
@@ -23,6 +23,7 @@ editor_options:
 ## Setup #----------------------------------------------------------------------
 rm(list = ls())
 knitr::opts_chunk$set(echo = TRUE)
+set.seed(5)
 
 # Packages #--------------------------------------------------------------------
 require(tidyverse)
@@ -67,22 +68,27 @@ abs_sus <- read.csv("../data-clean/redcap/absences_sus.csv")
 sal_res <- read.csv("../data-clean/molecular/positive-saliva-student-list.csv")
 test_res <- read.csv("../data-clean/molecular/saliva-results.csv")
 # Data: Social survey
-soc_res <- read.csv("../data-clean/survey/social-survey-results.csv")
+soc_res <- readRDS("../data-clean/survey/social-survey-results.rds")
+
+# Data: Imputed data for linked infections and absences
+infections_imp <- readRDS("../data-imputed/linked-infections-absences.rds") %>%
+  mutate(
+    pathogen = factor(pathogen, levels = pathgs)
+  )
 
 # Source functions #------------------------------------------------------------
-source("fct_descr_analysis.R")
+source("../utils/fct_descr_analysis.R")
 
 # Source data preparation #-----------------------------------------------------
-source("dataprep_descr_analysis.R")
+source("../utils/dataprep_descr_analysis.R")
 ```
 
 
 # Table 1: Description of study population
 
 ```{r Table 1}
-## Columns of Table 1: Overall, Class 1, Class 2, Class 3, Class 4 #------------
-
-## Frequency of students by sex and class #-------------------------------------
+## Frequency of students by sex and class 
+##------------------------------------------------------------------------------
 soc_res %>%
   filter(time == "Baseline", student_id %in% test_res$student_id) %>%
   mutate(Class = factor(substr(student_id, 1, 1), 
@@ -92,7 +98,8 @@ soc_res %>%
   CreateTableOne(.,vars = c("sex"), strata = "Class", 
                  test = FALSE,  addOverall = TRUE)
 
-## Frequency and type of school absences #--------------------------------------
+## Frequency and type of school absences 
+##------------------------------------------------------------------------------
 CreateTableOne(
   data = abs_sus %>%
     filter(student_id %in% test_res$student_id) %>%
@@ -109,7 +116,8 @@ CreateTableOne(
   strata = "class", addOverall = TRUE,
   vars = c("sick_with_resp", "sick_wo_resp", "other_vocal"), test = FALSE)
 
-## Frequency of positive saliva tests #-----------------------------------------
+## Frequency of positive saliva tests 
+##------------------------------------------------------------------------------
 CreateTableOne(
   data = viral_loads %>%
     dplyr::select(student_id, pathogen) %>%
@@ -118,7 +126,8 @@ CreateTableOne(
   strata = "class", vars = c("pathogen"),
   addOverall = TRUE, test = FALSE)
 
-## Frequency of positive students #---------------------------------------------
+## Frequency of positive students 
+##------------------------------------------------------------------------------
 nrow(viral_loads %>%
      dplyr::select(student_id) %>% distinct())
 viral_loads %>%
@@ -129,9 +138,10 @@ viral_loads %>%
  as.data.frame() %>%
  `rownames<-`(NULL)
 
-## Frequency of tests by class #------------------------------------------------
+## Frequency of tests by class 
+##------------------------------------------------------------------------------
 test_res %>%
-  filter(test_refused == FALSE & !is.na(pathogen_1)) %>%
+  filter(absent == FALSE & !is.na(pathogen_1)) %>%
   group_by(class) %>%
   summarise(n = n()) %>%
   ungroup()
@@ -177,9 +187,10 @@ figure_1_a <- viral_loads %>%
     title = element_text(size = 8, face = "bold"))
 
 # Positivity periods
-figure_1_b <- infectious_periods_IC %>% 
-  group_by(infectious_period) %>%
-  filter(row_number() == 1) %>%
+figure_1_b <- pos_periods %>% 
+  filter(!is.na(pathogen)) %>%
+  group_by(infection_id) %>%
+  slice(1) %>% 
   ungroup() %>%
   group_by(pathogen) %>%
   summarise(n = n()) %>%
@@ -197,7 +208,7 @@ figure_1_b <- infectious_periods_IC %>%
   geom_text(aes(y = pos, 
                 label = paste0(n, " (", round(n / sum(n) * 100, 0),
                                     "%)")),
-            size = 2.2, nudge_x = 0.27, show.legend = FALSE) +
+            size = 2.2, nudge_x = 0.28, show.legend = FALSE) +
   labs(
     caption = "Number (%) of infection episodes",
     title = "b"
@@ -213,9 +224,19 @@ figure_1_b <- infectious_periods_IC %>%
                                 face = "plain"),
     title = element_text(size = 8, face = "bold"))
 
+
 ## Save Figure 1 #-------------------------------------------------------------
-jpeg("../Figures/figure1.jpeg", width = 16, height = 10, units = 'cm', 
+jpeg("../../mcid3_DK/Draft/figure1.jpeg", width = 16, height = 10, units = 'cm', 
      res = 1000)
+figure_1_a + figure_1_b +
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "none",
+        legend.key.size = ggplot2::unit(0.4,"cm"))
+dev.off()
+
+# Save Figure 1 as .tif with dpi = 300
+tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure1.tif", width = 16, height = 10, units = 'cm', 
+     res = 300)
 figure_1_a + figure_1_b +
   plot_layout(guides = "collect") & 
   theme(legend.position = "none",
@@ -260,7 +281,8 @@ figure_2_a <- viral_loads %>%
     title = "a"
   ) +
   scale_x_continuous(breaks = 1:19, labels = days_plot) +
-  theme_minimal() +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_classic() +
   theme(
     axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
     legend.title = element_blank(),
@@ -309,15 +331,16 @@ figure_2_b <- viral_loads %>%
   ) +
   scale_x_continuous(breaks = c(1:19)[seq(1, 19, by = 2)],
                      labels = days_plot[seq(1, 19, by = 2)]) + 
-  scale_y_continuous(breaks = c(0, 5, 10),
+  scale_y_continuous(breaks = c(0, 5, 10), expand = c(0, 0),
                      labels = c(0, 5, 10)) +
-  theme_minimal() +
+  theme_classic() +
   theme(
     axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
     legend.title = element_blank(),
     legend.position = "bottom",
     title = element_text(size = 8, face = "bold"),
     strip.text = element_text(size = 8, face = "plain", vjust = 1),
+    strip.background = element_blank(),
     panel.grid.minor.x = element_blank()
     ) +
   annotate("rect", xmin = 6.5, 
@@ -328,7 +351,8 @@ figure_2_b <- viral_loads %>%
            label = "1-week vacation", 
            vjust = 0.42, hjust = 1, color = "black",
            size = 2.75, angle = 90) +
-  guides(fill = guide_legend(nrow =1, reverse = TRUE))
+  guides(fill = guide_legend(nrow =1, reverse = TRUE)) +
+  geom_hline(yintercept = 0)
 
 
 ## Save Figure 2 #--------------------------------------------------------------
@@ -343,11 +367,19 @@ figure_2 <- (figure_2_a / figure_2_b ) +
 y_axis_title <- ggdraw() + draw_label("Number of positive tests", 
                                       angle = 90, vjust = 0.8,
                                       size = 8)
-jpeg("../Figures/figure2.jpeg", width = 18, height = 20, units = 'cm',
+jpeg("../../mcid3_DK/Draft/figure2.jpeg", width = 18, height = 20, units = 'cm',
      res = 1000)
 plot_grid(y_axis_title, figure_2, 
           ncol = 2, 
-          rel_widths = c(0.03, 1))
+          rel_widths = c(0.05, 1))
+dev.off()
+
+# Save as .tif
+tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure2.tif", width = 18, height = 20, units = 'cm',
+     res = 300)
+plot_grid(y_axis_title, figure_2, 
+          ncol = 2, 
+          rel_widths = c(0.05, 1))
 dev.off()
 ```
 
@@ -356,7 +388,7 @@ dev.off()
 
 ```{r}
 ## Temporal distribution of positive saliva tests by gender #-------------------
-temporalD_gender <- viral_loads %>%
+spatialD_gender <- viral_loads %>%
   mutate(class_id = substr(student_id, 1, 1),
          pathogen  = factor(pathogen, levels = rev(pathgs),
                             labels = rev(pathgs.labels)),
@@ -382,14 +414,17 @@ temporalD_gender <- viral_loads %>%
   ) +
   scale_x_continuous(breaks = c(1:19)[seq(1, 19, by = 2)],
                      labels = days_plot[seq(1, 19, by = 2)]) +
-  theme_minimal() +
+  theme_classic() +
   theme(
     axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
     legend.title = element_blank(),
     legend.position = "bottom",
     title = element_text(size = 8, face = "bold"),
     strip.text = element_text(size = 8, face = "plain", vjust = 1),
-    panel.grid.minor.x = element_blank()
+    # remove strip label box
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.key.size = ggplot2::unit(0.4,"cm")
   ) +
   annotate("rect", xmin = 6.5, 
            xmax = 7.5,
@@ -403,98 +438,98 @@ temporalD_gender <- viral_loads %>%
     fill = guide_legend(nrow = 1, reverse = TRUE)
   )
 
-jpeg("../Figures/temporalDistribution_gender.jpeg",
+jpeg("../../mcid3_DK/Draft/spatialDistribution_gender.jpeg",
      width = 16, height = 10, units = "cm",
      res = 1000
 )
-temporalD_gender
+spatialD_gender
 dev.off()
 ```
 
 ## Supplements: Barplot and comparisons of Ct-values across pathogens
 
 ```{r echo=FALSE, include=FALSE}
-## Errorbar plot for Ct-values including standard errors #----------------------
-CT_barplot <- infectious_periods_IC %>%
-  # Data only considering lowest Ct value per positivity period to not introduce bias
-  # due to multiple measurements per person
-  group_by(infectious_period) %>%
-  arrange(ct) %>%
-  filter(row_number() == 1) %>%
+## Overall viral load (median [IQR])
+##------------------------------------------------------------------------------
+infections_imp %>%
+  filter(!is.na(infection_id)) %>%
+  group_by(infection_id) %>%
+  slice(1) %>%
   ungroup() %>%
+  # Extract minimal ct value per positivity period
+  mutate(
+    ct_min = sapply(salivas, function(x) min(as.numeric(unlist(x["ct"]))))
+  ) %>%
+  summarise(
+    median_ct = median(ct_min), ct_q1 = quantile(ct_min, 0.25), ct_q3 = quantile(ct_min, 0.75),
+  )
+
+## Errorbar plot for Ct-values including standard errors #----------------------
+CT_barplot <- infections_imp %>%
+  filter(!is.na(infection_id)) %>%
+  group_by(infection_id) %>%
+  slice(1) %>%
+  ungroup() %>%
+  # Extract minimal ct value per positivity period
+  mutate(
+    ct_min = sapply(salivas, function(x) min(as.numeric(unlist(x["ct"]))))
+  ) %>%
   # Plot
   group_by(pathogen) %>%
   summarise(
-    mean_ct = mean(ct), sd_ct = sd(ct), n = n()
+    median_ct = median(ct_min), ct_q1 = quantile(ct_min, 0.25), ct_q3 = quantile(ct_min, 0.75),
   ) %>%
   ungroup() %>%
   mutate(pathogen = factor(pathogen, levels = pathgs, labels = pathgs.labels)) %>%
   ggplot(aes(
     x = pathogen,
-    y = mean_ct,
-    fill = pathogen
+    y = median_ct,
+    color = pathogen
   )) +
-  geom_bar(stat = "identity") +
-  geom_point() +
+  geom_point(size = 2) +
   geom_errorbar(
     aes(
-      ymin = mean_ct - sd_ct/sqrt(n),
-      ymax = mean_ct + sd_ct/sqrt(n)
+      ymin = ct_q1,
+      ymax = ct_q3
     ),
-    width = 0.2
+    width = 0.2,
+    linewidth = 1
   ) +
-  scale_fill_manual(values = cols.labels) +
+  scale_color_manual(values = cols.labels) +
   scale_y_continuous(expand = c(0, 0)) +
   labs(
-    y = "Ct value",
-    title = "a"
+    y = "Viral load (Ct value)", title = "a"
   ) +
-  coord_cartesian(ylim = c(20,38)) +
-  theme_minimal() +
+  coord_cartesian(ylim = c(25,40)) +
+  theme_classic() +
   theme(
     axis.title.x = element_blank(),
     legend.position = "none",
     axis.text = element_text(size = 8),
     title = element_text(size = 8, face = "bold"),
     axis.title.y = element_text(size = 8, face = "plain"),
-    plot.margin = margin(0, 0, 0, 0)
+    
   )
 
 ## Modeling Ct-values #---------------------------------------------------------
 # using linear regression on respiratory virus adjusted for gender
 # considering only lowest Ct value per positivity period
-ME.mod <- lm(ct ~ pathogen + gender, data = infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  arrange(ct) %>%
-  filter(row_number() == 1) %>%
+ct.mod <- lm(ct_min ~ pathogen + sex, data = infections_imp %>%
+  filter(!is.na(pathogen)) %>%
+  group_by(infection_id) %>%
+  slice(1) %>%
   ungroup() %>%
-  dplyr::select(pathogen, ct, gender))
-
-# Model assumptions check
-plot(fitted(ME.mod), resid(ME.mod),
-  xlab = "Fitted values", ylab = "Residuals",
-  main = "Tuket-Anscombe Plot", col = "darkblue", pch = 20
-)
-abline(h = 0, col = "black", lty = 2)
-lw <- lowess(fitted(ME.mod), resid(ME.mod))
-lines(lw$x, lw$y, col = "red", lwd = 1, lty = 1)
-
-par(mfrow = c(1, 2), las = 1)
-qqnorm(resid(ME.mod),
-  pch = 20, cex = 1.2,
-  col = "darkblue", main = "Normal Q-Q Plot for residuals",
-  cex.main = 0.8, cex.lab = 0.8
-)
-qqline(resid(ME.mod))
-hist(resid(ME.mod), col = "darkblue", main = "Histogram of residuals", 
-     xlab = "Residuals", breaks = "fd", prob = T)
-par(mfrow = c(1, 1))
-
+  # Extract minimal ct value per positivity period
+  mutate(
+    ct_min = sapply(salivas, function(x) min(as.numeric(unlist(x["ct"]))))
+  ) %>%
+  left_join(soc_res %>% filter(time == "Baseline") %>%
+              dplyr::select(student_id, sex), by = "student_id"))
 # F-test
-anova(ME.mod)
-
+anova(ct.mod)
+         
 # Posthoc tests using linear contrasts
-posthoc <- glht(ME.mod, linfct = mcp(pathogen = "Tukey"))
+posthoc <- glht(ct.mod, linfct = mcp(pathogen = "Tukey"))
 posthoc.sum <- summary(posthoc, test = adjusted("none"))
 
 # Extract differences
@@ -505,46 +540,46 @@ CT_diff <- as.data.frame(posthoc.sum$test$coefficients) %>%
 # Data for heatmap of Ct differences below
 CT_diff <- CT_diff %>%
   mutate(
-    pathogen_1 = str_split(rownames(CT_diff), " - ", 
+    pathogen_1 = str_split(rownames(CT_diff), " - ",
                            simplify = T)[, 1],
-    pathogen_2 = str_split(rownames(CT_diff), " - ", 
+    pathogen_2 = str_split(rownames(CT_diff), " - ",
                            simplify = T)[, 2],
     sign = sapply(CT_diff$p_value, signif_code),
     diff_sign = as.character(paste0(round(CT_diff$diff, 1),
                                     sign))
   ) %>%
-  arrange(match(pathogen_1, c("HCoV-229E", "HCoV-OC43", "RSV", 
+  arrange(match(pathogen_1, c("HCoV-229E", "HCoV-OC43", "RSV",
                               "PIV", "AdV", "HRV", "IFB")))
 ## Heatmap of pairwise comparisons in Ct-values #-------------------------------
 Ct_heatmap <- CT_diff %>%
   mutate(
-    pathogen_1 = factor(pathogen_1, 
+    pathogen_1 = factor(pathogen_1,
                         levels = pathgs,
                         labels = pathgs.labels),
-    pathogen_2 = factor(pathogen_2, 
+    pathogen_2 = factor(pathogen_2,
                         levels = pathgs,
                         labels = pathgs.labels)) %>%
   ggplot(aes(x = pathogen_1, y = pathogen_2)) +
   geom_tile(aes(fill = diff), color = "white") +
   scale_fill_gradient2(
-    low = "#1E90FF", mid = "#D3D3D3", 
+    low = "#1E90FF", mid = "#D3D3D3",
     high = "#FF3030", midpoint = 0,
-    name = "Mean difference in Ct value   ", 
+    name = "Mean difference in Ct value   ",
     breaks = c(6,4,2,0,-2,-4, 6),
   ) +
-  geom_text(aes(label = diff_sign), size = 2.5) +
+  geom_text(aes(label = diff_sign), size = 2.8) +
   theme_minimal(base_size = 14) +
   labs(x = "", y = "",
        title = "b") +
   theme(
     axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
-    axis.text.y = element_text(size = 8, margin = margin(r = -5)), 
+    axis.text.y = element_text(size = 8, margin = margin(r = -5)),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.background = element_rect(fill = "white", color = NA),
     legend.position = "top",
     legend.direction = "horizontal",
-    legend.key.size = ggplot2::unit(0.5, "cm"),
+    legend.key.size = ggplot2::unit(0.8, "cm"),
     legend.title = element_text(size = 8, face = "plain"),
     legend.text = element_text(size = 8),
     title = element_text(size = 8, face = "bold"),
@@ -552,11 +587,11 @@ Ct_heatmap <- CT_diff %>%
   )
 
 ## Save Supplementary Figure #--------------------------------------------------
-jpeg("../Figures/S1_CT.jpeg",
-     width = 18, height = 20, units = "cm",
+jpeg("../../mcid3_DK/Draft/S1_CT.jpeg",
+     width = 18, height = 22, units = "cm",
      res = 1000)
-CT_barplot/ plot_spacer() /  Ct_heatmap +
-  plot_layout(heights = c(1,0.1, 1)) +
+CT_barplot / plot_spacer() / Ct_heatmap +
+  plot_layout(heights = c(1,0.02,1))
   theme(plot.margin = margin(0, -5, 0, 0))
 dev.off()
 ```
@@ -564,57 +599,63 @@ dev.off()
 
 ## Comparison of length of absence periods with and without respiratory virus
 
+Consider reporting IQR of absence periods instead of median with 95% CI.
+
 ```{r}
 ## Length of absence periods #--------------------------------------------------
-# Calculation of confidence intervals for length of absence periods with/without
-# matched respiratory virus
-surv_abs_novsyespatho <- absence_viral %>%
-  rename(observed = days_absent) %>%
-  mutate(possible = ifelse(date_return %in% Mondays[,1], -2, 0)) %>%
-  mutate(possible = ifelse(date_return == "2024-02-12", possible - 7, 0),
-         pathogen = ifelse(pathogen == "No pathogen", "No pathogen", "Pathogen")) %>%
-  dplyr::select(observed, possible, pathogen) %>%
-  mutate(pathogen = relevel(factor(pathogen, levels = c("No pathogen", "Pathogen")),
-                            ref = "No pathogen"))
+surv_absences <- infections_imp %>%
+  mutate(
+    group = factor(case_when(
+      is.na(pathogen) ~ "No pathogen",
+      TRUE ~ "Pathogen"
+  ), levels = c("No pathogen", "Pathogen")),
+  absence_time = as.numeric(difftime(date_return, date_absent, units = "days")),
+  # Account for interval censoring due to weekends/holidays
+  possible = case_when(
+    date_return %in% Mondays[,1] ~ -2,
+    date_return == "2024-02-12" ~ -7,
+    TRUE ~ 0
+  )
+) %>% as.data.frame()
 
-# Parametric model (gompertz distr. -> proportional hazards)
-par_abs_novsyespathog <- flexsurvreg(Surv(observed + possible, observed, 
-                                          type = "interval2") ~ pathogen, 
-                                          data = surv_abs_novsyespatho,
+par_abs_novsyespathog <- flexsurvreg(Surv(absence_time + possible, absence_time, 
+                                          type = "interval2") ~ group, 
+                                          data = surv_absences %>%
+                                       filter(!is.na(absence_time)),
                                           dist = "gompertz")
 
-# Summary table 
 tidy(par_abs_novsyespathog, conf.int = TRUE, transform = "coefs.exp") # p-values
-predict(par_abs_novsyespathog, 
-        newdata = data.frame(pathogen = c("No pathogen", "Pathogen")), 
-        conf.int = T, level = 0.95) # 95% CI
+predict(par_abs_novsyespathog, conf.int = T,  type = "quantile", p = 0.5,
+        newdata = data.frame(group = c("No pathogen", "Pathogen")))
+predict(par_abs_novsyespathog,  type = "quantile", p = 0.25,
+        newdata = data.frame(group = c("No pathogen", "Pathogen")))
+predict(par_abs_novsyespathog,  type = "quantile", p = 0.75,
+        newdata = data.frame(group = c("No pathogen", "Pathogen")))
+  
 ```
-
 
 ## Supplements: Boxplot for absence times due to respiratory infections
 
 ```{r}
 ## Boxplot of length of absence periods #---------------------------------------
-boxplot_absences <- absence_viral %>%
-  # No absence periods for HCoV-229E recorded
-  # include NA for HCoV-229E, so it is included on the x-axis
-  bind_rows(
-    # use a dummy for plotting
-    absence_viral[1, ] %>%
-      mutate(pathogen = "HCoV-229E",
-             days_absent = NA)
-  ) %>%
-  filter(pathogen != "No pathogen") %>%
-  mutate(pathogen = factor(pathogen, levels = pathgs,
-                           labels = pathgs.labels)) %>%
-  ggplot(aes(x = pathogen, y = days_absent)) +
-  geom_boxplot(fill = cols[-8]) +
+boxplot_absences <- infections_imp %>%
+  filter(!is.na(infection_id)) %>%
+  mutate(
+    absence_time = as.numeric(difftime(date_return, date_absent, units = "days")),
+    absence_time = case_when(
+    is.na(absence_time) ~ 0,
+    TRUE ~ absence_time
+  ),
+  pathogen = factor(pathogen, levels = pathgs,
+                    labels = pathgs.labels)) %>%
+  ggplot(aes(x = pathogen, y = absence_time)) +
+  geom_boxplot(fill = cols) +
   labs(
     x = "", 
     y = "Absence period (days)",
     title = ""
   ) +
-  theme_minimal() +
+  theme_classic() +
   theme(
     axis.text.x = element_text(angle = 0, 
                                hjust = 0.5, 
@@ -625,7 +666,7 @@ boxplot_absences <- absence_viral %>%
     plot.margin = margin(5,5,5,5)
   ) +
   scale_y_continuous(breaks = seq(0, 15, by = 2))
-jpeg("../Figures/S3_boxplot_absences.jpeg",
+jpeg("../../mcid3_DK/Draft/S3_boxplot_absences.jpeg",
      width = 16, height = 10, units = "cm",
      res = 1000
 )
@@ -636,19 +677,47 @@ dev.off()
 
 # Figure 3b: Proportion of positivity periods with absences
 
-```{r warning=FALSE, message=FALSE}
-## Proportion plot of positivity periods with associated absences #-------------
-# considered are absences with associated viral infection
-figure_3b <- infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  mutate(absence_yes = as.numeric(possible > 0 & type_absence == "viral")) %>%
-  filter(row_number() == 1) %>%
+```{r}
+## Proportion of absences for viruses without IFB
+##------------------------------------------------------------------------------
+infections_imp %>%
+    filter(!is.na(pathogen)) %>%
+    group_by(infection_id) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(
+        absence_time = as.numeric(difftime(date_return, date_absent, units = "days")),
+        absence = case_when(
+            absence_time > 0 ~ "yes",
+            TRUE ~ "no"
+        )
+    ) %>% filter(!(pathogen %in% c("IFB"))) %>%
+    summarise(
+        N = n(),
+        n = sum(absence == "yes"),
+        prop = n/N,
+        co = BinomCI(x = n, n = N, method = "wilson", conf.level = 0.95)
+    ) 
+```
+
+```{r}
+figure_3b <- infections_imp %>%
+  filter(!is.na(pathogen)) %>%
+  group_by(infection_id) %>%
+  slice(1) %>%
   ungroup() %>%
+  mutate(
+    absence_time = as.numeric(difftime(date_return, date_absent, units = "days")),
+    absence = case_when(
+      absence_time > 0 ~ "yes",
+      TRUE ~ "no"
+    )
+  ) %>%
   group_by(pathogen) %>%
   summarise(
-    n = sum(absence_yes),
-    prop = round(n/n(), 2),
-    N = n()
+    N = n(),
+    n = sum(absence == "yes"),
+    prop = n/N
   ) %>%
   mutate(lwr = BinomCI(x = n, n = N,
                        method = "wilson", conf.level = 0.95)[,2],
@@ -659,10 +728,10 @@ figure_3b <- infectious_periods_IC %>%
   ggplot(aes(x = pathogen, y = prop, col = pathogen)) +
   # Add errorbars
   geom_errorbar(aes(ymin = lwr, ymax = upr),
-                width = 0.4, size =1) + 
+                width = 0.4, size =1) +
   # Add estimates of CI boundaries above/below errorbars
   geom_text(aes(y = upr + 0.045001, label = round(upr * 100, 0)), size = 3.2) +
-  geom_text(data = .%>% filter(pathogen != "HCoV-229E"),
+  geom_text(data = .%>% filter(!(pathogen %in% c("IFB", "HCoV-229E"))),
             aes(y = lwr - 0.045001, label = round(lwr * 100, 0)), size = 3.2) +
   # geom_point(size = 3) +
   geom_tile(aes(width = 0.4, height = 0.09), 
@@ -670,8 +739,8 @@ figure_3b <- infectious_periods_IC %>%
             fill = "white", color = cols) +
   # Add point estimates within squares
   geom_text(aes(label = round(prop * 100, 0)), size = 3.2) +
-  scale_color_manual(values = cols) +
-  theme_minimal() +
+  scale_color_manual(values = cols.labels) +
+  theme_classic() +
   labs(
     x = "", y = "Infections with absences (%)",
     title = "b"
@@ -682,9 +751,112 @@ figure_3b <- infectious_periods_IC %>%
     legend.position = "none",
     title = element_text(size = 8, face = "bold")
   ) +
-  scale_y_continuous(limits = c(-0.045, 1.03), 
+  scale_y_continuous(limits = c(-0.045, 1.045), 
                      breaks = seq(0, 1, by = 0.2), 
                      labels = paste0(seq(0, 100, by = 20), "%"))
+```
+
+```{r}
+## Comparison of proportion of absences across pathogens w/pairwise RDs
+##------------------------------------------------------------------------------
+abs_tab <- infections_imp %>%
+    filter(!is.na(pathogen)) %>%
+    group_by(infection_id) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(
+        absence_time = as.numeric(difftime(date_return, date_absent, units = "days")),
+        absence = factor(case_when(
+            absence_time > 0 ~ "yes",
+            TRUE ~ "no"
+        ), levels = c("no", "yes"))) %>%
+  dplyr::select(pathogen, absence) %>% table()
+
+
+pathogens <- rownames(abs_tab)
+risk_diff_results <- data.frame(Pathogen1 = character(), Pathogen2 = character(),
+                                RiskDifference = numeric(),
+                                CI_Lower = numeric(), CI_Upper = numeric(),
+                                p_value = numeric(), stringsAsFactors = FALSE)
+
+for (i in 1:(nrow(abs_tab) - 1)) {
+  for (j in (i + 1):nrow(abs_tab)) {
+    # Extract values
+    a <- abs_tab[i, "yes"]
+    b <- abs_tab[j, "yes"]
+    N1 <- sum(abs_tab[i, ])
+    N0 <- sum(abs_tab[j, ])
+    
+    # Compute risk difference
+    rd <- riskdifference(a, b, N1, N0)
+    
+    # Store results
+    risk_diff_results <- rbind(risk_diff_results, data.frame(
+                                Pathogen1 = pathogens[i],
+                                Pathogen2 = pathogens[j],
+                                RiskDifference = rd$estimate,
+                                CI_Lower = rd$conf.int[1],
+                                CI_Upper = rd$conf.int[2],
+                                p_value = rd$p.value
+                              ))
+  }
+}
+
+jpeg("../../mcid3_DK/Draft/risk_diff_absences.jpeg",
+     width = 16, height = 12, units = "cm",
+     res = 1000
+)
+risk_diff_results %>% 
+  mutate(
+    Pathogen1 = factor(Pathogen1, levels = rev(pathgs), labels = rev(pathgs.labels)),
+    Pathogen2 = factor(Pathogen2, levels = rev(pathgs), labels = rev(pathgs.labels)),
+  ) %>%
+  mutate(
+    rd_sign = paste0(round(RiskDifference,2) * 100, signif_code(p_value))
+  ) %>%
+  ggplot(aes(x = Pathogen1, y = Pathogen2, fill = RiskDifference)) +
+  geom_tile() +
+  geom_text(aes(label = paste0(round(RiskDifference,1), signif_code(p_value))), size = 2.8) +
+  theme_minimal(base_size = 14) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  labs(x = "", y = "") +
+  theme(
+    axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
+    axis.text.y = element_text(size = 8, margin = margin(r = -5)),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    legend.position = "none",
+    title = element_text(size = 8, face = "bold"),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+dev.off()
+```
+
+
+```{r}
+## Compare proportion of absences of IFB with other respiratory viruses
+##------------------------------------------------------------------------------
+abs_ifb_v_other <- infections_imp %>%
+    filter(!is.na(pathogen)) %>%
+    group_by(infection_id) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(
+        absence_time = as.numeric(difftime(date_return, date_absent, units = "days")),
+        absence = factor(case_when(
+            absence_time > 0 ~ "yes",
+            TRUE ~ "no"
+        ), levels = c("no", "yes")),
+        pathogen = factor(case_when(
+          pathogen == "IFB" ~ "IFB",
+          TRUE ~ "other"
+        ), levels = c("other", "IFB"))
+    ) %>%
+  dplyr::select(pathogen, absence) %>% 
+  table() %>%
+  twoby2()
+  
 ```
 
 
@@ -692,20 +864,15 @@ figure_3b <- infectious_periods_IC %>%
 
 ```{r}
 ## Survival analysis for days absent #------------------------------------------
-# Survival data construction considering interval-censoring
-absence_viral_surv <- absence_viral %>%
-  rename(observed = days_absent) %>%
-  mutate(possible = ifelse(date_return %in% Mondays[,1], -2, 0)) %>%
-  mutate(possible = ifelse(date_return == "2024-02-12", possible - 7, 0)) %>%
-  filter(pathogen != "No pathogen") %>%
-  dplyr::select(observed, possible, pathogen) %>%
-  mutate(pathogen = relevel(factor(pathogen, levels = pathgs[-8]), 
-                            ref = "AdV"))
-
 # Parametric model (gompertz distr. -> proportional hazards)
-abs_par <- flexsurvreg(Surv(observed + possible, observed, 
+surv_absences_2 <- surv_absences %>%
+   filter(!is.na(pathogen)) 
+
+abs_par <- flexsurvreg(Surv(absence_time + possible, absence_time, 
                             type = "interval2") ~ pathogen, 
-                       data = absence_viral_surv,
+                       data = surv_absences_2 %>% mutate(
+                         pathogen = relevel(pathogen, ref = "RSV") # reference category
+                       ),
                        dist = "gompertz")
 
 # Summary table
@@ -718,17 +885,17 @@ new.data <- data.frame(pathogen = factor(c("IFA", "IFB", "HRV", "AdV",
                                                     "AdV", "PIV", "RSV", 
                                                     "HCoV-OC43")))
 # Graphical display
-jpeg("../Figures/S3_survival_absent_days.jpeg",
+jpeg("../../mcid3_DK/Draft/S3_survival_absent_days.jpeg",
      width = 16, height = 12, units = "cm",
      res = 1000
 )
 par(las = 1, xaxs = "i", yaxs = "i",
      mgp = c(2.5, 1, 0),
      mar = c(4.1, 3.8, 0.5, 0.5))
-plot(abs_par, newdata = new.data, 
+plot(abs_par, newdata = new.data,
      col = cols[levels(new.data$pathogen)], 
      col.obs = rgb(0, 0, 0, alpha = 0),
-     t = seq(0, 10, by = 0.01),
+     t = seq(0, 15, by = 0.01),
      xlab = "Days since first absence", ylab = "Probability of being absent (%)",
      lwd = 2, main = "",
      yaxt = "n",
@@ -739,6 +906,21 @@ legend(x = "topright", col = cols[levels(new.data$pathogen)],
        legend = pathgs.labels[-8],
        lwd = 2)
 dev.off()
+
+## Survival analysis for days absent comparing IFB to other viruses
+abs_par_ifb_v_other <- flexsurvreg(Surv(absence_time + possible, absence_time, 
+                            type = "interval2") ~ pathogen, 
+                       data = surv_absences_2 %>% mutate(
+                         pathogen = factor(case_when(
+                           pathogen == "IFB" ~ "IFB",
+                           TRUE ~ "other"
+                         ), levels = c("other", "IFB"))
+                       ),
+                       dist = "gompertz")
+tidy(abs_par_ifb_v_other) %>%
+  pull(estimate) %>% exp() %>% round(2)
+predict(abs_par_ifb_v_other, type = "quantile", p = 0.5, conf.int = T,
+        newdata = data.frame(pathogen = c("IFB", "other")))
 ```
 
 # Figure 3c: Absence periods confidence intervals
@@ -747,7 +929,7 @@ dev.off()
 ## 95%-confidence intervals length of absence periods by respiratory virus #----
 figure_3c <- data.frame(
   # Confidence intervals for prediction from survival model
-  cbind(predict(abs_par, newdata = new.data, conf.int = T), 
+  cbind(predict(abs_par, newdata = new.data, type = "quantile", p = 0.5, conf.int = T), 
         new.data$pathogen)
   ) %>%
   # Truncation for plot, as this is a conditional absence time, so it must be at least
@@ -756,7 +938,7 @@ figure_3c <- data.frame(
   # Include HCoV-229E, for which no absence period with symptoms recorded, on x-axis, without values
   bind_rows(
     data.frame(
-      .pred_time = NA,
+      .pred_quantile = NA,
       .pred_lower = NA,
       .pred_upper = NA,
       new.data.pathogen = "HCoV-229E"
@@ -767,7 +949,7 @@ figure_3c <- data.frame(
                                    levels = pathgs,
                                    labels = pathgs.labels)) %>%
   # Plotting
-  ggplot(aes(x = new.data.pathogen, y = .pred_time, col = new.data.pathogen)) +
+  ggplot(aes(x = new.data.pathogen, y = .pred_quantile, col = new.data.pathogen)) +
   # Errorbars
   geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper),
                 width = 0.4, size = 1) + 
@@ -780,10 +962,10 @@ figure_3c <- data.frame(
   geom_tile(aes(width = 0.4, height = 0.6), 
             size = 0.9, fill = "white", color = cols) +
   # Add point estimates within squares (rounded to 1 decimal)
-  geom_text(aes(label = round(.pred_time, 1)), size = 3.2) +
+  geom_text(aes(label = round(.pred_quantile, 1)), size = 3.2) +
   # Formatting 
   scale_color_manual(values = cols.labels) +
-  theme_minimal() +
+  theme_classic() +
   labs(
     x = "", y = "Absence period (days)",
     title = "c"
@@ -802,26 +984,19 @@ figure_3c <- data.frame(
 
 ```{r}
 ## Length of interval-censored positivity period by respiratory virus #---------
-boxplot_pp <- infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  filter(row_number() == 1) %>%
+boxplot_pp <- pos_periods %>%
+  filter(!is.na(pathogen)) %>%
   mutate(pathogen = factor(pathogen, levels = pathgs,
                            labels = pathgs.labels)) %>%
-  # 1. If Positivity periods at the beginning, or end
-  # 2. observed + possible < IC_pred
-  # -> Increase possible s.t. observed + possible = IC_pred
-  #mutate(possible = ifelse(observed + possible < IC_pred[pathogen], 
-  #                        IC_pred[pathogen] - observed, possible)) %>%
-  ungroup() %>%
   ggplot(aes(pathogen, observed + possible, fill = pathogen)) +
   geom_boxplot() +
   scale_color_manual(values = cols.labels) +
   scale_fill_manual(values = cols.labels) +
   labs(
-    x = "", y = "Positivity period (days)",
+    x = "", y = "Duration of detection (days)",
     title = ""
   ) +
-  theme_minimal() +
+  theme_classic() +
   theme(
     legend.position = "none",
     title = element_text(hjust = 0, face = "bold", size = 8),
@@ -831,7 +1006,7 @@ boxplot_pp <- infectious_periods_IC %>%
   ) +
     scale_y_continuous(breaks = c(1,10,20,30))
 
-jpeg("../Figures/S2_boxplot_PPs.jpeg", 
+jpeg("../../mcid3_DK/Draft/S2_boxplot_PPs.jpeg", 
      width = 16, height = 10,
      units = 'cm', res = 1000)
 boxplot_pp
@@ -848,21 +1023,24 @@ dev.off()
 
 # Definition of censoring indicator
 # Right-censored if at beginning or end of the study
-SurvDataPP <- infectious_periods_IC %>%
-  mutate(censoring_indicator = ifelse(date == "2024-01-22", 0,                  
-                                      ifelse(date == "2024-03-08", 0, 
-                                             ifelse(substr(student_id, 1, 1) == "D" &
-                                                      date == "2024-03-01", 0,
-                                                    ifelse(possible > 0, 3, 1))))) %>%
-  group_by(infectious_period) %>%
-  arrange(desc(censoring_indicator == 3),      # Interval-censored
-          desc(censoring_indicator == 0),      # Right-censored
-          desc(censoring_indicator == 1)) %>%  # Exact
-  filter(row_number() == 1) %>%
-  ungroup() %>%
-  dplyr::select(censoring_indicator, observed, possible, pathogen) %>%
-  mutate(pathogen = relevel(factor(pathogen, levels = pathgs), ref = "PIV"),
-         possible = ifelse(censoring_indicator == 3, possible, 0))
+SurvDataPP <- pos_periods %>%
+  mutate(
+    pathogen = factor(pathogen, levels = pathgs),
+    pathogen = relevel(pathogen, ref = "HCoV-229E"),
+  censoring_indicator = case_when(
+    possible > 0 ~ 3,
+    TRUE ~ 1
+  ),
+  possible = ifelse(censoring_indicator == 3, possible, 0)) %>%
+  dplyr::select(censoring_indicator, observed, possible, pathogen)
+
+## Overall duration of detection length
+mod.overall <-  flexsurvreg(Surv(time = observed,
+                           time2 = observed + possible,
+                           event = censoring_indicator,
+                           type = "interval") ~ 1, 
+                      data = SurvDataPP, dist = "gompertz")
+predict(mod.overall, conf.int = T, type = "quantile", p = 0.5)[1,]
 
 # Parametric model (gompertz distribution -> proportional hazards)
 mod.PP <- flexsurvreg(Surv(time = observed,
@@ -878,15 +1056,17 @@ tidy(mod.PP, conf.int = TRUE, transform = "coefs.exp") # p-values
 new.data <- data.frame(pathogen = factor(pathgs, levels = pathgs))
 
 # Confidence intervals for prediction of absence period length
+set.seed(910)
 pp_predicted_ci <- data.frame(cbind(predict(mod.PP, newdata = new.data,
-                                            conf.int = T),
+                                            conf.int = T, type = "quantile",
+                                            p = 0.5),
                                     new.data$pathogen)
-                              ) 
+                              )
 # Results text
 round(pp_predicted_ci[pp_predicted_ci$new.data.pathogen == "IFB", 1:3],2)
 
 # Graphical display
-jpeg("../Figures/S2_survival_positivityperiod.jpeg",
+jpeg("../../mcid3_DK/Draft/S2_survival_positivityperiod.jpeg",
      width = 16, height = 12, units = "cm",
      res = 1000
 )
@@ -915,35 +1095,33 @@ dev.off()
 ## Plot 95% confidence intervals for lengths of estimated positivity periods #--
 figure_3a <- pp_predicted_ci %>%
   # Arrange for consistent ordering in plot
-  mutate(new.data.pathogen = factor(new.data.pathogen, 
+  mutate(new.data.pathogen = factor(new.data.pathogen,
                                     levels = pathgs,
                                     labels = pathgs.labels)) %>%
   # Plotting
-  ggplot(aes(x = new.data.pathogen, y = .pred_time, col = new.data.pathogen)) +
+  ggplot(aes(x = new.data.pathogen, y = .pred_quantile, col = new.data.pathogen)) +
   # Errorbars
   geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper),
-                width = 0.4, size = 1) + 
+                width = 0.4, size = 1) +
   # Add estimates of CI boundaries above/below errorbars
-  geom_text(aes(y = .pred_upper + 0.9, 
+  geom_text(aes(y = .pred_upper + 0.9,
                 label = round(.pred_upper, 1)), size = 3.2) +
-  geom_text(aes(y = .pred_lower - 0.9, 
+  geom_text(aes(y = .pred_lower - 0.9,
                 label = round(.pred_lower, 1)), size = 3.2) +
   # Add tiles for point estimates
-  geom_tile(aes(width = 0.4, height = 1.6), 
+  geom_tile(aes(width = 0.4, height = 1.6),
             size = 0.9, fill = "white", color = cols) +
   # Add point estimates within squares (rounded to 1 decimal)
-  geom_text(aes(label = round(.pred_time, 1)), size = 3.2) +
-  # Formatting 
-  scale_color_manual(values = cols) +
-  theme_minimal() +
+  geom_text(aes(label = round(.pred_quantile, 1)), size = 3.2) +
+  # Formatting
+  scale_color_manual(values = cols.labels) +
+  theme_classic() +
   labs(
-    x = "", y = "Positivity period (days)",
+    x = "", y = "Duration of detection (days)",
     title = "a"
   ) +
   # ylim(NA, NA) +
   scale_y_continuous(breaks = seq(1, 16, by = 3)) +
-  # scale_y_continuous(limits = c(1, NA), expand = expansion(add = c(0.9,0.5)),
-  #                    breaks = seq(1,16,3)) +
   theme(
     axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
     axis.title.y = element_text(size = 8, face = "plain"),
@@ -952,9 +1130,17 @@ figure_3a <- pp_predicted_ci %>%
   )
 
 ## Save Figure 3 #--------------------------------------------------------------
-jpeg("../Figures/figure3.jpeg",
+jpeg("../../mcid3_DK/Draft/figure3.jpeg",
      width = 18, height = 18,
      units = 'cm', res = 1000)
+figure_3a/figure_3b/figure_3c +
+  theme(
+        plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
+dev.off()
+
+# Save as .tif
+tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure3.tif",
+     width = 18, height = 18, units = "cm", res = 1000)
 figure_3a/figure_3b/figure_3c +
   theme(
         plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
@@ -1051,6 +1237,7 @@ radar_plot_8 <- data.frame(
     panel.grid = element_blank()
   )
 
+
 title_grob_8 <- textGrob("HCoV-229E", gp = gpar(fontsize = 8, fontface = "bold"))
 
 combined_plot_8 <- arrangeGrob(
@@ -1063,10 +1250,17 @@ combined_plot_8 <- arrangeGrob(
 spider[[8]] <- combined_plot_8
 
 ## Save Figure 4 #--------------------------------------------------------------
-jpeg("../Figures/figure4.jpeg", width = 18, 
+jpeg("../../mcid3_DK/Draft/figure4.jpeg", width = 18, 
      height = 20, units = 'cm', res = 1000)
 gridExtra::grid.arrange(grobs = spider, ncol = 2)
 dev.off()
+
+# Save as .tif
+tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure4.tif",
+     width = 18, height = 20, units = "cm", res = 1000)
+gridExtra::grid.arrange(grobs = spider, ncol = 2)
+dev.off()
+
 ```
 
 ## Supplements: Hierarchical Clustering by Self-Reported Symptoms
@@ -1081,7 +1275,7 @@ symptoms_hc <- symptoms %>%
   dist(method = "euclidian") %>%
   hclust(method = "complete")
 
-jpeg("../Figures/S4_cluster_symptoms.jpeg", width = 16, 
+jpeg("../../mcid3_DK/Draft/S4_cluster_symptoms.jpeg", width = 16, 
      height = 12, units = 'cm', res = 1000)
 plot(as.dendrogram(symptoms_hc), main = "",
      xlab = "", ylab = "Distance", col = "black")
@@ -1093,11 +1287,15 @@ dev.off()
 ```{r}
 ## Fishers exact test for association between gender and respiratory viruses #--
 # Infectious periods are only be counted once
-fisherTestData <- infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  filter(row_number() == 1) %>%
-  ungroup()
-tab.fish.gen <- table(fisherTestData$gender, 
+set.seed(910)
+fisherTestData <- infections_imp %>%
+  group_by(infection_id) %>%
+  slice(1) %>%
+  ungroup() %>%
+ left_join(soc_data %>% filter(time == "Baseline") %>% 
+             dplyr::select(Class, sex, student_id),
+           by = "student_id")
+tab.fish.gen <- table(fisherTestData$sex, 
                       fisherTestData$pathogen)
 fisher.test(tab.fish.gen, simulate.p.value = TRUE)
 ```
@@ -1106,9 +1304,7 @@ fisher.test(tab.fish.gen, simulate.p.value = TRUE)
 
 ```{r warning=FALSE, message=FALSE}
 ## Fishers exact test for association between class and respiratory viruses #---
-tab.fish.class <- table(fisherTestData %>%
-                          mutate(class = substr(student_id, 1, 1)) %>%
-                          pull(class),
+tab.fish.class <- table(fisherTestData$Class,
                         fisherTestData$pathogen)
 # Fisher's exact test for 4x8 contigency table
 fisher.test(tab.fish.class, simulate.p.value = TRUE)
@@ -1118,62 +1314,75 @@ fisher.test(tab.fish.class, simulate.p.value = TRUE)
 
 ```{r}
 ## Number of infectious periods with only one positive test #-------------------
-infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  # Filter for groups containing only one row
-  filter(n() == 1) %>%
-  ungroup() %>%
-  { 
-    cat("Number of infectious periods with only one positive test:", nrow(.), "\n")
-  }
-  
-## Number of infectious periods with 2 positive tests #-------------------------
-infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  # Filter for groups containing more than one row
-  filter(n() == 2) %>%
-  filter(row_number() == 1) %>%
-  ungroup() %>%
-  { 
-    cat("Number of infectious periods with two positive tests:", nrow(.), "\n")
-  }
-
-## Number of infectious periods with 3 or more positive tests #-----------------
-infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  # Filter for groups containing more than one row
-  filter(n() >= 3) %>%
-  filter(row_number() == 1) %>%
-  ungroup() %>%
-  { 
-    cat("Number of infectious periods with three or more positive tests:", nrow(.), "\n")
-  }
-
-## All infectious period of length 8 positive tests #---------------------------
-infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  # Filter for groups containing more than one row
-  filter(n() == 8) %>%
-  filter(row_number() == 1) %>%
-  ungroup() %>%
-  { 
-    cat("Number of infectious periods with eight positive tests:", nrow(.), "\n")
-    cat("Pathogen:", pathgs[unique(.$pathogen)], "\n")
-  }
-
-## All infectious period of length 6 positive tests #---------------------------
-infectious_periods_IC %>%
-  group_by(infectious_period) %>%
-  # Filter for groups containing more than one row
-  filter(n() >= 6) %>%
-  filter(row_number() == 1) %>%
-  ungroup() %>%
-  { 
-    cat("Number of infectious periods with seven positive tests:", nrow(.), "\n")
-    cat("Pathogen:", pathgs[(.$pathogen)], "\n")
-  }
+# infectious_periods_IC %>%
+#   group_by(infectious_period) %>%
+#   # Filter for groups containing only one row
+#   filter(n() == 1) %>%
+#   ungroup() %>%
+#   { 
+#     cat("Number of infectious periods with only one positive test:", nrow(.), "\n")
+#   }
+#   
+# ## Number of infectious periods with 2 positive tests #-------------------------
+# infectious_periods_IC %>%
+#   group_by(infectious_period) %>%
+#   # Filter for groups containing more than one row
+#   filter(n() == 2) %>%
+#   filter(row_number() == 1) %>%
+#   ungroup() %>%
+#   { 
+#     cat("Number of infectious periods with two positive tests:", nrow(.), "\n")
+#   }
+# 
+# ## Number of infectious periods with 3 or more positive tests #-----------------
+# infectious_periods_IC %>%
+#   group_by(infectious_period) %>%
+#   # Filter for groups containing more than one row
+#   filter(n() >= 3) %>%
+#   filter(row_number() == 1) %>%
+#   ungroup() %>%
+#   { 
+#     cat("Number of infectious periods with three or more positive tests:", nrow(.), "\n")
+#   }
+# 
+# ## All infectious period of length 8 positive tests #---------------------------
+# infectious_periods_IC %>%
+#   group_by(infectious_period) %>%
+#   # Filter for groups containing more than one row
+#   filter(n() == 8) %>%
+#   filter(row_number() == 1) %>%
+#   ungroup() %>%
+#   { 
+#     cat("Number of infectious periods with eight positive tests:", nrow(.), "\n")
+#     cat("Pathogen:", pathgs[unique(.$pathogen)], "\n")
+#   }
+# 
+# ## All infectious period of length 6 positive tests #---------------------------
+# infectious_periods_IC %>%
+#   group_by(infectious_period) %>%
+#   # Filter for groups containing more than one row
+#   filter(n() >= 6) %>%
+#   filter(row_number() == 1) %>%
+#   ungroup() %>%
+#   { 
+#     cat("Number of infectious periods with seven positive tests:", nrow(.), "\n")
+#     cat("Pathogen:", pathgs[(.$pathogen)], "\n")
+#   }
 
 ## All coinfectious periods #----------------------------------------
+# Number of coninfections
+infections_imp %>%
+  filter(!is.na(pathogen)) %>%
+  group_by(infection_id) %>%
+  slice(1) %>%
+  ungroup() %>%
+  group_by(student_id) %>%
+  filter(n() > 1) %>%
+  # For each student, count the number of coinfections
+  # For all pairwise rows, check whether date_first_sample or date_last_sample is
+  # within the interval of the other row
+
+
 # Number of coinfections
 infectious_periods_IC %>%
   group_by(student_id, time_id) %>%
@@ -1197,5 +1406,7 @@ infectious_periods_IC %>%
   mutate(class = substr(student_id, 1, 1)) %>%
   group_by(class) %>%
   summarise(n = n_distinct(infectious_period))
+
 ```
+
 

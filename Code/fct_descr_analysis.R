@@ -3,8 +3,9 @@
 # Description: Set of utility functions needed for the analysis                #
 ################################################################################
 
-## Function for significance coding #-------------------------------------------
-signif_code <- function(p) {
+## Function for significance coding
+##------------------------------------------------------------------------------
+signif_code <- Vectorize(function(p) {
   if (p <= 0.001) {
     "***"
   } else if (p <= 0.01) {
@@ -14,15 +15,17 @@ signif_code <- function(p) {
   } else {
     ""
   }
-}
+}, vectorize.args = "p")
 
-## Function to check whether a minimum is unique #------------------------------
+## Function to check whether a minimum is unique
+##------------------------------------------------------------------------------
 is_unique_min <- function(vec) {
   min_value <- min(vec)
   sum(vec == min_value) == 1
 }
 
-## Function to link respiratory viruses to absences #---------------------------
+## Function to link respiratory viruses to absences
+##------------------------------------------------------------------------------
 link_absences_to_pathogens <- function(absences, range_days) {
   # 1. Extract all positive test results possibly linked to an absence by student id
   # 2. Check whether date of positive test result is "range_days" or less days before absence 
@@ -63,7 +66,8 @@ link_absences_to_pathogens <- function(absences, range_days) {
   return(absences)
 }
 
-## Function for normalization #-------------------------------------------------
+## Function for normalization
+##------------------------------------------------------------------------------
 normalize <- function(x) {
   if (max(x) == min(x)) {
     return(rep(0, length(x))) 
@@ -71,4 +75,3 @@ normalize <- function(x) {
     return((x - min(x)) / (max(x) - min(x)))
   }
 }
-##------------------------------------------------------------------------------
