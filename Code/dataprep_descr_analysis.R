@@ -1,19 +1,17 @@
-################################################################################
-# Title: "data_preparation_descr_analysis.R"                                   #
-# Description: Data preparation for the descriptive analysis of data           #
-#              collected in the MCID_3 study.                                  #
-################################################################################
+## -----------------------------------------------------------------------------
+## Title: "data_preparation_descr_analysis.R"                                   
+## Description: Data preparation for the descriptive analysis of data           
+##              collected in the MCID_3 study.                                  
+## -----------------------------------------------------------------------------
 
-## Dates of saliva sample collection
+## Dates of saliva sampling
 ##------------------------------------------------------------------------------
-test.dates <- unique(sal_res$date)[order(as.Date(unique(sal_res$date)))]
 time_id <- 1:18
-names(time_id) <- test.dates
+names(time_id) <- unique(sal_res$date)[order(as.Date(unique(sal_res$date)))]
 
-## Saliva sample test results
+## Saliva sampling results
 ##------------------------------------------------------------------------------
 viral_loads <- data.frame(sal_res %>%
-                            # Transformation of variables
                             mutate(student_id = as.factor(student_id),
                                    date = as.Date(date),
                                    class = as.factor(class),
@@ -81,32 +79,10 @@ soc_data <- soc_res %>%
 
 ## School absenteeism data 
 ##------------------------------------------------------------------------------
-# Absences due to sickness with respiratory symptoms
-# absence_viral <- abs_sus %>%
-#   filter(reason == "sickness", symp_respir == 1) %>%
-#   # Calculate the number of days between the onset of symptoms and the absence
-#   mutate(days_symptom_absent = as.numeric(difftime(date_absence,
-#                                                    date_symptom,
-#                                                    units = "days")))
-# 
-# # Matching of absences due to viral symptoms to positive saliva samples
-# # Range is set to four days
-# absence_viral <- link_absences_to_pathogens(absence_viral, range_days = 4) %>%
-#   mutate(pathogen = coalesce(pathogen, "No pathogen"),
-#          pathogen = factor(pathogen,
-#                            levels = c(pathgs, "No pathogen")))
-
 # Absences due to other reasons than sickness
 absence_non_viral <- abs_sus %>%
   filter(reason != "sickness") %>%
   dplyr::select(date_absence, date_return, student_id)
-
-# Check whether absences due to other reasons than sickness are close to test results, 
-# maybe no symptoms were reported
-# Range here is set to two days
-# absence_non_viral <- link_absences_to_pathogens(absence_non_viral, range_days = 2) %>%
-#   filter(!is.na(pathogen))
-# -> No absences due to other reasons than sickness were matched to positive test results
 
 # Dates of Mondays/Fridays during the study period
 Mondays <- data.frame(
@@ -152,23 +128,21 @@ abs_mandatory <- data.frame(
 # Absences which are not due to viral symptoms (mandatory absences, other reasons)
 absences_nonvirus <- data.frame(
   student_id = rep(unique(sal_res$student_id), each = nrow(abs_mandatory)),
-  date_absent = rep(abs_mandatory$date_absence,
-                     length(unique(sal_res$student_id))),
-  date_return = rep(abs_mandatory$date_return, 
-                    length(unique(sal_res$student_id)))) %>%
-  mutate(date_absent = as.Date(date_absent),
-         date_return = as.Date(date_return)) %>% 
+  date_absent = rep(abs_mandatory$date_absence, length(unique(sal_res$student_id))),
+  date_return = rep(abs_mandatory$date_return, length(unique(sal_res$student_id)))) %>%
+  mutate(date_absent = as.Date(date_absent), date_return = as.Date(date_return)) %>% 
   bind_rows(absence_non_viral %>%
               mutate(
                 date_absence = as.Date(date_absence),
                 date_return = as.Date(date_return)
-              ))
+              )
+            )
 
-## Inclusion of forced absences into absence data
+# Inclusion of forced absences into absence data
 infections_pos <- infections_imp %>%
   filter(!is.na(infection_id)) %>%
-  dplyr::select(student_id, infection_id, pathogen, date_sample_first, date_sample_last, date_absent,
-                date_return) %>%
+  dplyr::select(student_id, infection_id, pathogen, date_sample_first, 
+                date_sample_last, date_absent, date_return) %>%
   bind_rows(
     infections_imp %>% 
       filter(!is.na(infection_id)) %>%
@@ -274,8 +248,51 @@ pos_periods <- infections_pos %>%
   ungroup()
 
 
+## Co-infections
+## -----------------------------------------------------------------------------
+coinf <- infections_imp |>
+  filter(!is.na(date_sample_first), !is.na(date_sample_last)) |>
+  arrange(student_id, date_sample_first) |>
+  group_by(student_id) |>
+  mutate(
+    next_start = lead(date_sample_first),
+    next_end = lead(date_sample_last),
+    next_pathogen = lead(pathogen),
+    
+    prev_start = lag(date_sample_first),
+    prev_end = lag(date_sample_last),
+    prev_pathogen = lag(pathogen)
+  ) |>
+  filter(
+    (next_start <= date_sample_last & date_sample_first <= next_end & pathogen != next_pathogen) |
+      (prev_start <= date_sample_last & date_sample_first <= prev_end & pathogen != prev_pathogen)
+  ) |>
+  filter(n() > 1)
 
-
+## Symptoms without co-infections
+## -----------------------------------------------------------------------------
+symptoms_woci <- unnest(infections_imp, cols = "symptoms") %>%
+  filter(!is.na(pathogen) & !(infection_id %in% coinf$infection_id)) |>
+  dplyr::select(pathogen, symp_fever, symp_chills, symp_limb_pain, 
+                symp_loss_of_taste, symp_loss_of_smell, symp_fatigue, symp_cough, 
+                symp_cold, symp_diarrhea, symp_sore_throat, symp_headache, 
+                symp_shortness_of_breath, symp_stomach_pains) %>%
+  group_by(pathogen) %>%
+  summarise(
+    fever = mean(symp_fever, na.rm = T),
+    chills = mean(symp_chills, na.rm = T),
+    limb_pain = mean(symp_limb_pain, na.rm = T),
+    loss_of_taste = mean(symp_loss_of_taste, na.rm = T),
+    loss_of_smell = mean(symp_loss_of_smell, na.rm = T),
+    fatigue = mean(symp_fatigue, na.rm = T),
+    cough = mean(symp_cough, na.rm = T),
+    cold = mean(symp_cold, na.rm = T),
+    diarrhea = mean(symp_diarrhea, na.rm = T),
+    sore_throat = mean(symp_sore_throat, na.rm = T),
+    headache = mean(symp_headache, na.rm = T),
+    shortness_of_breath = mean(symp_shortness_of_breath, na.rm = T),
+    stomach_pains = mean(symp_stomach_pains, na.rm = T)
+  )
 
 
 

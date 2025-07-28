@@ -1,7 +1,7 @@
 ---
-title: 'Respiratory viruses and school absenteeism: a longitudinal field study'
+title: "Absences, symptoms and respiratory viruses in a Swiss school: Longitudinal study with serial saliva sampling"
 author: "David Kronthaler"
-date: "2024-05-17"
+date: "2025-05-29"
 output:
   word_document:
     toc: true
@@ -20,12 +20,15 @@ editor_options:
 ---
 
 ```{r Setup, include=FALSE}
-## Setup #----------------------------------------------------------------------
+## Setup 
+## -----------------------------------------------------------------------------
 rm(list = ls())
 knitr::opts_chunk$set(echo = TRUE)
 set.seed(5)
+Sys.setlocale("LC_TIME", "en_US.UTF-8")
 
-# Packages #--------------------------------------------------------------------
+## Packages
+## -----------------------------------------------------------------------------
 require(tidyverse)
 require(patchwork)
 require(multcomp)
@@ -41,8 +44,8 @@ require(cowplot)
 require(ggradar)
 require(tableone)
 
-# Setup for coloring #----------------------------------------------------------
-# Respiratory viruses levels
+## Colors
+## -----------------------------------------------------------------------------
 pathgs <- c("IFA", "IFB", "HRV", "AdV", "PIV", "RSV", "HCoV-OC43", "HCoV-229E")
 cols <- wes_palette("IsleofDogs1")
 cols <- c(
@@ -52,16 +55,12 @@ cols <- c(
   wes_palette("FantasticFox1")[c(4, 5)]
 )
 names(cols) <- pathgs
-
-# Respiratory viruses labels
-pathgs.labels <- c("IAV", "IBV", "HRV", "AdV", "PIV", "RSV", "HCoV-OC43","HCoV-229E")
+pathgs.labels <- c("IAV", "IBV", "HRV", "AdV", "PIV", "RSV", "HCoV-OC43", "HCoV-229E")
 cols.labels <- cols
 names(cols.labels) <- pathgs.labels
 
-# Language settings #-----------------------------------------------------------
-Sys.setlocale("LC_TIME", "en_US.UTF-8")
-
-# Load data #-------------------------------------------------------------------
+## Load data 
+## -----------------------------------------------------------------------------
 # Data: Recorded school absences
 abs_sus <- read.csv("../data-clean/redcap/absences_sus.csv")
 # Data: Saliva samples
@@ -69,18 +68,38 @@ sal_res <- read.csv("../data-clean/molecular/positive-saliva-student-list.csv")
 test_res <- read.csv("../data-clean/molecular/saliva-results.csv")
 # Data: Social survey
 soc_res <- readRDS("../data-clean/survey/social-survey-results.rds")
-
 # Data: Imputed data for linked infections and absences
-infections_imp <- readRDS("../data-imputed/linked-infections-absences.rds") %>%
+
+sens10abs <- TRUE
+sens4abs <- TRUE
+
+# Sens. Analysis: absence matching based on 4day window
+if (sens4abs) {
+  infections_imp <- readRDS("../data-imputed/linked-infections-absences4.rds") %>%
   mutate(
     pathogen = factor(pathogen, levels = pathgs)
   )
+  source("../utils/fct_descr_analysis.R")
+  source("../utils/dataprep_descr_analysis.R")
+  symp4 <- symptoms
+} 
+# Sens. Analysis: absence matching based on 10day window
+if (sens10abs) {
+  infections_imp <- readRDS("../data-imputed/linked-infections-absences10.rds") %>%
+  mutate(
+    pathogen = factor(pathogen, levels = pathgs)
+  )
+  source("../utils/dataprep_descr_analysis.R")
+  symp10 <- symptoms
+}
 
-# Source functions #------------------------------------------------------------
-source("../utils/fct_descr_analysis.R")
-
-# Source data preparation #-----------------------------------------------------
+# main data preprocessing
+infections_imp <- readRDS("../data-imputed/linked-infections-absences_ds.rds") %>%
+  mutate(
+    pathogen = factor(pathogen, levels = pathgs)
+  )
 source("../utils/dataprep_descr_analysis.R")
+
 ```
 
 
@@ -151,7 +170,8 @@ test_res %>%
 # Figure 1: Distribution of positive saliva tests and positivity periods
 
 ```{r warning=FALSE, message=FALSE}
-## Distribution of positive saliva tests and positivity periods #---------------
+## Distribution of positive saliva tests and positivity periods 
+## -----------------------------------------------------------------------------
 # Positive saliva tests
 figure_1_a <- viral_loads %>%
   group_by(pathogen) %>%
@@ -225,7 +245,8 @@ figure_1_b <- pos_periods %>%
     title = element_text(size = 8, face = "bold"))
 
 
-## Save Figure 1 #-------------------------------------------------------------
+## Save Figure 1
+## -----------------------------------------------------------------------------
 jpeg("../../mcid3_DK/Draft/figure1.jpeg", width = 16, height = 10, units = 'cm', 
      res = 1000)
 figure_1_a + figure_1_b +
@@ -233,8 +254,6 @@ figure_1_a + figure_1_b +
   theme(legend.position = "none",
         legend.key.size = ggplot2::unit(0.4,"cm"))
 dev.off()
-
-# Save Figure 1 as .tif with dpi = 300
 tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure1.tif", width = 16, height = 10, units = 'cm', 
      res = 300)
 figure_1_a + figure_1_b +
@@ -248,7 +267,8 @@ dev.off()
 # Figure 2: Temporal distribution of positive saliva tests overall and by class
 
 ```{r}
-## Positive saliva tests over time #--------------------------------------------
+## Positive saliva tests over time 
+## -----------------------------------------------------------------------------
 # Dates for x-axis
 days_plot <- c(unique(viral_loads$date)[order(unique(viral_loads$date))][1:6], 
                "2024-02-07", 
@@ -257,7 +277,8 @@ days_plot <- c(unique(viral_loads$date)[order(unique(viral_loads$date))][1:6],
   format("%b %d")
 days_plot[is.na(days_plot)] <- ""
 
-## Figure 2a: Overall #---------------------------------------------------------
+## Figure 2a: Overall
+## -----------------------------------------------------------------------------
 figure_2_a <- viral_loads %>%
   mutate(class_id = substr(student_id, 1, 1),
          pathogen  = factor(pathogen, 
@@ -293,14 +314,14 @@ figure_2_a <- viral_loads %>%
            xmax = 7.5,
            ymin = 0, ymax = Inf,
            fill = "darkgray", alpha = 0.5)+
-  # add vertical text in box
   annotate("text", x = 7, y = 13, 
            label = "1-week vacation", 
            vjust = 0.5, hjust = 0.8, color = "black",
            size = 3, angle = 90) +
   guides(fill = guide_legend(nrow =1, reverse = TRUE))
 
-## Figure 2b: Stratified by Class #---------------------------------------------
+## Figure 2b: Stratified by Class
+## -----------------------------------------------------------------------------
 figure_2_b <- viral_loads %>%
   mutate(class_id = as.factor(paste("Class", substr(student_id, 1, 1))),
          pathogen  = factor(pathogen, levels = rev(pathgs),
@@ -355,7 +376,8 @@ figure_2_b <- viral_loads %>%
   geom_hline(yintercept = 0)
 
 
-## Save Figure 2 #--------------------------------------------------------------
+## Save Figure 2
+## -----------------------------------------------------------------------------
 figure_2 <- (figure_2_a / figure_2_b ) + 
   plot_layout(guides = "collect", axis_title = "collect",
               heights = c(1,1)) &
@@ -373,8 +395,6 @@ plot_grid(y_axis_title, figure_2,
           ncol = 2, 
           rel_widths = c(0.05, 1))
 dev.off()
-
-# Save as .tif
 tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure2.tif", width = 18, height = 20, units = 'cm',
      res = 300)
 plot_grid(y_axis_title, figure_2, 
@@ -387,7 +407,8 @@ dev.off()
 ## Supplements: Temporal distribution of positive saliva tests by gender
 
 ```{r}
-## Temporal distribution of positive saliva tests by gender #-------------------
+## Temporal distribution of positive saliva tests by gender
+## -----------------------------------------------------------------------------
 spatialD_gender <- viral_loads %>%
   mutate(class_id = substr(student_id, 1, 1),
          pathogen  = factor(pathogen, levels = rev(pathgs),
@@ -421,7 +442,6 @@ spatialD_gender <- viral_loads %>%
     legend.position = "bottom",
     title = element_text(size = 8, face = "bold"),
     strip.text = element_text(size = 8, face = "plain", vjust = 1),
-    # remove strip label box
     strip.background = element_blank(),
     panel.grid.minor.x = element_blank(),
     legend.key.size = ggplot2::unit(0.4,"cm")
@@ -450,7 +470,7 @@ dev.off()
 
 ```{r echo=FALSE, include=FALSE}
 ## Overall viral load (median [IQR])
-##------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 infections_imp %>%
   filter(!is.na(infection_id)) %>%
   group_by(infection_id) %>%
@@ -464,7 +484,8 @@ infections_imp %>%
     median_ct = median(ct_min), ct_q1 = quantile(ct_min, 0.25), ct_q3 = quantile(ct_min, 0.75),
   )
 
-## Errorbar plot for Ct-values including standard errors #----------------------
+## Errorbar plot for Ct-values including standard errors
+## -----------------------------------------------------------------------------
 CT_barplot <- infections_imp %>%
   filter(!is.na(infection_id)) %>%
   group_by(infection_id) %>%
@@ -511,9 +532,8 @@ CT_barplot <- infections_imp %>%
     
   )
 
-## Modeling Ct-values #---------------------------------------------------------
-# using linear regression on respiratory virus adjusted for gender
-# considering only lowest Ct value per positivity period
+## Modeling Ct-values
+## -----------------------------------------------------------------------------
 ct.mod <- lm(ct_min ~ pathogen + sex, data = infections_imp %>%
   filter(!is.na(pathogen)) %>%
   group_by(infection_id) %>%
@@ -550,7 +570,9 @@ CT_diff <- CT_diff %>%
   ) %>%
   arrange(match(pathogen_1, c("HCoV-229E", "HCoV-OC43", "RSV",
                               "PIV", "AdV", "HRV", "IFB")))
-## Heatmap of pairwise comparisons in Ct-values #-------------------------------
+
+## Heatmap of pairwise comparisons in Ct-values
+## -----------------------------------------------------------------------------
 Ct_heatmap <- CT_diff %>%
   mutate(
     pathogen_1 = factor(pathogen_1,
@@ -586,7 +608,8 @@ Ct_heatmap <- CT_diff %>%
     plot.margin = margin(0, 0, 0, 0)
   )
 
-## Save Supplementary Figure #--------------------------------------------------
+## Save Supplementary Figure
+## -----------------------------------------------------------------------------
 jpeg("../../mcid3_DK/Draft/S1_CT.jpeg",
      width = 18, height = 22, units = "cm",
      res = 1000)
@@ -599,10 +622,9 @@ dev.off()
 
 ## Comparison of length of absence periods with and without respiratory virus
 
-Consider reporting IQR of absence periods instead of median with 95% CI.
-
 ```{r}
-## Length of absence periods #--------------------------------------------------
+## Length of absence periods
+## -----------------------------------------------------------------------------
 surv_absences <- infections_imp %>%
   mutate(
     group = factor(case_when(
@@ -616,7 +638,8 @@ surv_absences <- infections_imp %>%
     date_return == "2024-02-12" ~ -7,
     TRUE ~ 0
   )
-) %>% as.data.frame()
+) %>% as.data.frame() |>
+  left_join(soc_data |> dplyr::select(student_id, Gender), by = "student_id")
 
 par_abs_novsyespathog <- flexsurvreg(Surv(absence_time + possible, absence_time, 
                                           type = "interval2") ~ group, 
@@ -637,7 +660,8 @@ predict(par_abs_novsyespathog,  type = "quantile", p = 0.75,
 ## Supplements: Boxplot for absence times due to respiratory infections
 
 ```{r}
-## Boxplot of length of absence periods #---------------------------------------
+## Boxplot of length of absence periods
+## -----------------------------------------------------------------------------
 boxplot_absences <- infections_imp %>%
   filter(!is.na(infection_id)) %>%
   mutate(
@@ -726,18 +750,14 @@ figure_3b <- infections_imp %>%
          pathogen = factor(pathogen, levels = pathgs,
                            labels = pathgs.labels)) %>%
   ggplot(aes(x = pathogen, y = prop, col = pathogen)) +
-  # Add errorbars
   geom_errorbar(aes(ymin = lwr, ymax = upr),
                 width = 0.4, size =1) +
-  # Add estimates of CI boundaries above/below errorbars
   geom_text(aes(y = upr + 0.045001, label = round(upr * 100, 0)), size = 3.2) +
   geom_text(data = .%>% filter(!(pathogen %in% c("IFB", "HCoV-229E"))),
             aes(y = lwr - 0.045001, label = round(lwr * 100, 0)), size = 3.2) +
-  # geom_point(size = 3) +
   geom_tile(aes(width = 0.4, height = 0.09), 
             size = 0.9,
             fill = "white", color = cols) +
-  # Add point estimates within squares
   geom_text(aes(label = round(prop * 100, 0)), size = 3.2) +
   scale_color_manual(values = cols.labels) +
   theme_classic() +
@@ -836,7 +856,7 @@ dev.off()
 
 ```{r}
 ## Compare proportion of absences of IFB with other respiratory viruses
-##------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 abs_ifb_v_other <- infections_imp %>%
     filter(!is.na(pathogen)) %>%
     group_by(infection_id) %>%
@@ -863,7 +883,8 @@ abs_ifb_v_other <- infections_imp %>%
 ## Supplements: Survival analysis for days absent
 
 ```{r}
-## Survival analysis for days absent #------------------------------------------
+## Survival analysis for days absent 
+## -----------------------------------------------------------------------------
 # Parametric model (gompertz distr. -> proportional hazards)
 surv_absences_2 <- surv_absences %>%
    filter(!is.na(pathogen)) 
@@ -926,7 +947,8 @@ predict(abs_par_ifb_v_other, type = "quantile", p = 0.5, conf.int = T,
 # Figure 3c: Absence periods confidence intervals
 
 ```{r}
-## 95%-confidence intervals length of absence periods by respiratory virus #----
+## 95%-confidence intervals length of absence periods by respiratory virus
+## -----------------------------------------------------------------------------
 figure_3c <- data.frame(
   # Confidence intervals for prediction from survival model
   cbind(predict(abs_par, newdata = new.data, type = "quantile", p = 0.5, conf.int = T), 
@@ -948,22 +970,16 @@ figure_3c <- data.frame(
   mutate(new.data.pathogen = factor(new.data.pathogen, 
                                    levels = pathgs,
                                    labels = pathgs.labels)) %>%
-  # Plotting
   ggplot(aes(x = new.data.pathogen, y = .pred_quantile, col = new.data.pathogen)) +
-  # Errorbars
   geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper),
                 width = 0.4, size = 1) + 
-  # Add estimates of CI boundaries above/below errorbars
   geom_text(aes(y = .pred_upper + 0.3, 
                 label = round(.pred_upper, 1)), size = 3.2) +
   geom_text(aes(y = .pred_lower - 0.3, 
                 label = round(.pred_lower, 1)), size = 3.2) +
-  # Add tiles for point estimates
   geom_tile(aes(width = 0.4, height = 0.6), 
             size = 0.9, fill = "white", color = cols) +
-  # Add point estimates within squares (rounded to 1 decimal)
   geom_text(aes(label = round(.pred_quantile, 1)), size = 3.2) +
-  # Formatting 
   scale_color_manual(values = cols.labels) +
   theme_classic() +
   labs(
@@ -983,7 +999,8 @@ figure_3c <- data.frame(
 ## Supplements: Boxplot for length of positivity periods
 
 ```{r}
-## Length of interval-censored positivity period by respiratory virus #---------
+## Length of interval-censored positivity period by respiratory virus 
+## -----------------------------------------------------------------------------
 boxplot_pp <- pos_periods %>%
   filter(!is.na(pathogen)) %>%
   mutate(pathogen = factor(pathogen, levels = pathgs,
@@ -1016,7 +1033,8 @@ dev.off()
 ## Supplements: Survival Analysis for Positivity Periods
 
 ```{r}  
-## Model the length of the positivity period #----------------------------------
+## Model the length of the positivity period
+## -----------------------------------------------------------------------------
 # Censoring indicator: 0 = right-censored, 1 = observed, 3 = interval-censored
 # Observed: observed length of positivity period
 # Possible: possible length of positivity period, no saliva sampling due to absences
@@ -1092,35 +1110,28 @@ dev.off()
 # Figure 3a: Cofidence intervals of estimated positivity periods
 
 ```{r}
-## Plot 95% confidence intervals for lengths of estimated positivity periods #--
+## Plot 95% confidence intervals for lengths of estimated positivity periods
+## -----------------------------------------------------------------------------
 figure_3a <- pp_predicted_ci %>%
-  # Arrange for consistent ordering in plot
   mutate(new.data.pathogen = factor(new.data.pathogen,
                                     levels = pathgs,
                                     labels = pathgs.labels)) %>%
-  # Plotting
   ggplot(aes(x = new.data.pathogen, y = .pred_quantile, col = new.data.pathogen)) +
-  # Errorbars
   geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper),
                 width = 0.4, size = 1) +
-  # Add estimates of CI boundaries above/below errorbars
   geom_text(aes(y = .pred_upper + 0.9,
                 label = round(.pred_upper, 1)), size = 3.2) +
   geom_text(aes(y = .pred_lower - 0.9,
                 label = round(.pred_lower, 1)), size = 3.2) +
-  # Add tiles for point estimates
   geom_tile(aes(width = 0.4, height = 1.6),
             size = 0.9, fill = "white", color = cols) +
-  # Add point estimates within squares (rounded to 1 decimal)
   geom_text(aes(label = round(.pred_quantile, 1)), size = 3.2) +
-  # Formatting
   scale_color_manual(values = cols.labels) +
   theme_classic() +
   labs(
     x = "", y = "Duration of detection (days)",
     title = "a"
   ) +
-  # ylim(NA, NA) +
   scale_y_continuous(breaks = seq(1, 16, by = 3)) +
   theme(
     axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5),
@@ -1129,7 +1140,8 @@ figure_3a <- pp_predicted_ci %>%
     title = element_text(size = 8, face = "bold")
   )
 
-## Save Figure 3 #--------------------------------------------------------------
+## Save Figure 3
+## -----------------------------------------------------------------------------
 jpeg("../../mcid3_DK/Draft/figure3.jpeg",
      width = 18, height = 18,
      units = 'cm', res = 1000)
@@ -1137,8 +1149,6 @@ figure_3a/figure_3b/figure_3c +
   theme(
         plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
 dev.off()
-
-# Save as .tif
 tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure3.tif",
      width = 18, height = 18, units = "cm", res = 1000)
 figure_3a/figure_3b/figure_3c +
@@ -1151,8 +1161,9 @@ dev.off()
 # Figure 4: Radar plots of self-reported symptoms by pathogen
 
 ```{r}
-## Radar plots of self-reported symptoms by pathogen #--------------------------
-# Apply normalization function to each column except "pathogen"
+## Radar plots of self-reported symptoms by pathogen
+## -----------------------------------------------------------------------------
+# For Sensitivity analysis
 symptoms_scaled <- symptoms %>%
   mutate(across(-pathogen, normalize),
          pathogen = factor(pathogen, levels = pathgs)) %>%
@@ -1190,17 +1201,15 @@ for (i in 1:nrow(symptoms_scaled)) {
       panel.grid = element_blank()
     )
   
-  # Create a title grob
   title_grob <- textGrob(pathgs.labels[i], gp = gpar(fontsize = 8, fontface = "bold"))
-  
-  # Arrange the title and the plot with adjusted spacing
   combined_plot <- arrangeGrob(
     title_grob,
     radar_plot,
     ncol = 1,
-    heights = unit.c(grobHeight(title_grob) + ggplot2::unit(0.1, "line"), ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - ggplot2::unit(0.1, "line"))
+    heights = unit.c(grobHeight(title_grob) + ggplot2::unit(0.1, "line"), 
+                     ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - 
+                       ggplot2::unit(0.1, "line"))
   )
-  
   spider[[i]] <- combined_plot
 }
 
@@ -1237,6 +1246,194 @@ radar_plot_8 <- data.frame(
     panel.grid = element_blank()
   )
 
+title_grob_8 <- textGrob("HCoV-229E", gp = gpar(fontsize = 8, fontface = "bold"))
+
+combined_plot_8 <- arrangeGrob(
+  title_grob_8,
+  radar_plot_8,
+  ncol = 1,
+  heights = unit.c(grobHeight(title_grob_8) + ggplot2::unit(0.1, "line"), 
+                   ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - ggplot2::unit(0.1, "line"))
+)
+
+spider[[8]] <- combined_plot_8
+
+## Save Figure 4
+## -----------------------------------------------------------------------------
+jpeg("../../mcid3_DK/Draft/figure4.jpeg", width = 18, 
+     height = 20, units = 'cm', res = 1000)
+gridExtra::grid.arrange(grobs = spider, ncol = 2)
+dev.off()
+tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure4.tif",
+     width = 18, height = 20, units = "cm", res = 1000)
+gridExtra::grid.arrange(grobs = spider, ncol = 2)
+dev.off()  
+```
+
+```{r}
+## Sensitivity Analysis Self-reported symptoms
+## -----------------------------------------------------------------------------
+# which sensitivity analysis
+without_coinf <- TRUE
+
+if (!without_coinf) {
+  symp4_scaled <- symp4 %>%
+    mutate(across(-pathogen, normalize),
+           pathogen = factor(pathogen, levels = pathgs)) %>%
+    arrange(pathogen)
+  
+  symp10_scaled <- symp10 %>%
+    mutate(across(-pathogen, normalize),
+           pathogen = factor(pathogen, levels = pathgs)) %>%
+    arrange(pathogen)
+  
+} else {
+  symptoms_scaled_woci <- symptoms_woci %>%
+    mutate(across(-pathogen, normalize),
+           pathogen = factor(pathogen, levels = pathgs)) %>%
+    arrange(pathogen)
+}
+
+spider <- list()
+
+for (i in 1:nrow(symptoms_scaled)) {
+  
+  if (!without_coinf) {
+    df_cols <- c("7 days" = "#3474b4", "4 days" = "#d31d1d", "10 days" = "darkgreen") 
+    
+    df1 <- symptoms_scaled[i, ] %>%
+      mutate(dataset = "7 days", pathogen = as.character(pathogen)) %>%
+      dplyr::select(dataset, fever:stomach_pains)
+    
+    df2 <- symp4_scaled[i, ] %>%
+      mutate(dataset = "4 days", pathogen = as.character(pathogen)) %>%
+      dplyr::select(dataset, fever:stomach_pains)
+    
+    df3 <- symp10_scaled[i, ] %>%
+      mutate(dataset = "10 days", pathogen = as.character(pathogen)) %>%
+      dplyr::select(dataset, fever:stomach_pains)
+    
+    dfc <- bind_rows(df3, df1, df2) |>
+      mutate(dataset = factor(dataset, levels = c("4 days", "7 days", "10 days")))
+  } else if (without_coinf) {
+    df_cols <- c("With co-infections" = "#3474b4", "Without co-infections" = "#d31d1d") 
+    
+    dfc <- bind_rows(symptoms_scaled[i,] |>
+                       mutate(dataset = "With co-infections",
+                              pathogen = as.character(pathogen)) |>
+                       dplyr::select(dataset, fever:stomach_pains),
+                     symptoms_scaled_woci[i,]|> 
+                       mutate(dataset = "Without co-infections", 
+                              pathogen = as.character(pathogen)) |>
+                       dplyr::select(dataset, fever:stomach_pains))
+  }
+  
+  radar_plot <- ggradar(dfc,
+                        group.colours = df_cols,
+                        group.point.size = 0,
+                        grid.min = 0, grid.mid = 0.5, grid.max = 1,
+                        base.size = 0.000001,
+                        grid.label.size = 3,
+                        axis.label.size = 2.8,
+                        gridline.label.offset = 0.0001,
+                        gridline.mid.colour = "gray",
+                        plot.extent.x.sf = 2.1,
+                        fill = TRUE,
+                        group.line.width = 0.5,
+                        fill.alpha = 0,
+                        axis.labels = c("Fever", "Chills", "Limb pain", 
+                                        "Loss of taste", 
+                                        "Loss of smell", "Fatigue", "Cough",
+                                        "Runny nose", "Diarrhea",
+                                        "Sore throat", "Headache", 
+                                        "Shortness of breath", 
+                                        "Stomach pains")) +
+    theme(
+      legend.position = "bottom",
+      legend.text = element_text(
+        size = 8, 
+        colour = if (i == 2) "black" else "white"
+      ),
+      legend.title = element_text(
+        size = 8,
+        colour = if (i == 2) "black" else "white"
+      ),
+      legend.key = element_rect(
+        fill = if (i == 2) "white" else "white", 
+        colour = if (i == 2) "black" else "white"
+      ),
+      legend.key.size = ggplot2::unit(0.5, "cm"),
+      plot.title = element_text(size = 8, face = "bold", hjust = 0.5),
+      axis.text = element_text(size = 6),
+      panel.grid = element_blank()) +
+    guides(color = guide_legend(
+      override.aes = list(
+        size = 1,
+        color = if (i != 2) rep("white", length(df_cols)) else df_cols
+      )
+    ))
+  
+  title_grob <- textGrob(pathgs.labels[i], gp = gpar(fontsize = 8, fontface = "bold"))
+  combined_plot <- arrangeGrob(
+    title_grob,
+    radar_plot,
+    ncol = 1,
+    heights = unit.c(grobHeight(title_grob) + ggplot2::unit(0.1, "line"), 
+                     ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - 
+                       ggplot2::unit(0.1, "line"))
+  )
+  spider[[i]] <- combined_plot
+}
+
+radar_plot_8 <- data.frame(
+  pathogen = "HCoV-229E",
+  fever = 0, chills = 0, limb_pain = 0, loss_of_taste = 0, loss_of_smell = 0,
+  fatigue = 0, cough = 0, cold = 0, diarrhea = 0, sore_throat = 0,
+  headache = 0, shortness_of_breath = 0, stomach_pains = 0
+) %>%
+  ggradar(group.colours = "lightgray",
+          group.point.size = 0,
+          grid.min = 0, grid.mid = 0.5, grid.max = 1,
+          base.size = 0.000001,
+          grid.label.size = 3,
+          axis.label.size = 2.8,
+          gridline.label.offset = 0.0001,
+          gridline.mid.colour = "gray",
+          plot.extent.x.sf = 2.1,
+          fill = TRUE,
+          group.line.width = 0.000000001,
+          fill.alpha = 0,
+          axis.labels = c("Fever", "Chills", "Limb pain", 
+                          "Loss of taste", 
+                          "Loss of smell", "Fatigue", "Cough",
+                          "Runny nose", "Diarrhea",
+                          "Sore throat", "Headache", 
+                          "Shortness of breath", 
+                          "Stomach pains")) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(
+      size = 8, 
+      colour = "white"
+    ),
+    legend.title = element_text(
+      size = 8,
+      colour = "white"
+    ),
+    legend.key = element_rect(
+      fill =  "white", 
+      colour =  "white"
+    ),
+    legend.key.size = ggplot2::unit(0.0, "cm"),
+    plot.title = element_text(size = 8, face = "bold", hjust = 0.5),
+    axis.text = element_text(size = 6),
+    panel.grid = element_blank()) +
+  guides(color = guide_legend(
+    override.aes = list(
+      size = 1,
+      color = "white"
+    )
+  ))
 
 title_grob_8 <- textGrob("HCoV-229E", gp = gpar(fontsize = 8, fontface = "bold"))
 
@@ -1244,29 +1441,34 @@ combined_plot_8 <- arrangeGrob(
   title_grob_8,
   radar_plot_8,
   ncol = 1,
-  heights = unit.c(grobHeight(title_grob_8) + ggplot2::unit(0.1, "line"), ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - ggplot2::unit(0.1, "line"))
+  heights = unit.c(grobHeight(title_grob_8) + ggplot2::unit(0.1, "line"), 
+                   ggplot2::unit(1, "npc") - 4*grobHeight(title_grob) - ggplot2::unit(0.1, "line"))
 )
 
 spider[[8]] <- combined_plot_8
 
-## Save Figure 4 #--------------------------------------------------------------
-jpeg("../../mcid3_DK/Draft/figure4.jpeg", width = 18, 
-     height = 20, units = 'cm', res = 1000)
 gridExtra::grid.arrange(grobs = spider, ncol = 2)
-dev.off()
 
-# Save as .tif
-tiff("../../mcid3_DK/Draft/after_review/figures_tif/figure4.tif",
-     width = 18, height = 20, units = "cm", res = 1000)
-gridExtra::grid.arrange(grobs = spider, ncol = 2)
-dev.off()
-
+if (!without_coinf) {
+  jpeg("../../mcid3_DK/Draft/figure4_sens1.jpeg", width = 18, 
+       height = 20, units = 'cm', res = 500)
+  gridExtra::grid.arrange(grobs = spider, ncol = 2)
+  dev.off()
+} else if (without_coinf) {
+  jpeg("../../mcid3_DK/Draft/figure4_sens2.jpeg", width = 18, 
+       height = 20, units = 'cm', res = 500)
+  gridExtra::grid.arrange(grobs = spider, ncol = 2)
+  dev.off()
+}
 ```
+
+
 
 ## Supplements: Hierarchical Clustering by Self-Reported Symptoms
 
 ```{r}
-## Hierarchical clustering #----------------------------------------------------
+## Hierarchical clustering
+## -----------------------------------------------------------------------------
 # detect which pathogens are similar in self-reported symptoms
 par(las = 1)
 symptoms_hc <- symptoms %>%
@@ -1285,7 +1487,8 @@ dev.off()
 ## Fisher's exact test: Gender and respiratory viruses
 
 ```{r}
-## Fishers exact test for association between gender and respiratory viruses #--
+## Fishers exact test for association between gender and respiratory viruses
+## -----------------------------------------------------------------------------
 # Infectious periods are only be counted once
 set.seed(910)
 fisherTestData <- infections_imp %>%
@@ -1303,7 +1506,8 @@ fisher.test(tab.fish.gen, simulate.p.value = TRUE)
 ## Fisher's exact test: Class and positivity periods
 
 ```{r warning=FALSE, message=FALSE}
-## Fishers exact test for association between class and respiratory viruses #---
+## Fishers exact test for association between class and respiratory viruses
+## -----------------------------------------------------------------------------
 tab.fish.class <- table(fisherTestData$Class,
                         fisherTestData$pathogen)
 # Fisher's exact test for 4x8 contigency table
@@ -1313,93 +1517,10 @@ fisher.test(tab.fish.class, simulate.p.value = TRUE)
 ## Description of positivity periods
 
 ```{r}
-## Number of infectious periods with only one positive test #-------------------
-# infectious_periods_IC %>%
-#   group_by(infectious_period) %>%
-#   # Filter for groups containing only one row
-#   filter(n() == 1) %>%
-#   ungroup() %>%
-#   { 
-#     cat("Number of infectious periods with only one positive test:", nrow(.), "\n")
-#   }
-#   
-# ## Number of infectious periods with 2 positive tests #-------------------------
-# infectious_periods_IC %>%
-#   group_by(infectious_period) %>%
-#   # Filter for groups containing more than one row
-#   filter(n() == 2) %>%
-#   filter(row_number() == 1) %>%
-#   ungroup() %>%
-#   { 
-#     cat("Number of infectious periods with two positive tests:", nrow(.), "\n")
-#   }
-# 
-# ## Number of infectious periods with 3 or more positive tests #-----------------
-# infectious_periods_IC %>%
-#   group_by(infectious_period) %>%
-#   # Filter for groups containing more than one row
-#   filter(n() >= 3) %>%
-#   filter(row_number() == 1) %>%
-#   ungroup() %>%
-#   { 
-#     cat("Number of infectious periods with three or more positive tests:", nrow(.), "\n")
-#   }
-# 
-# ## All infectious period of length 8 positive tests #---------------------------
-# infectious_periods_IC %>%
-#   group_by(infectious_period) %>%
-#   # Filter for groups containing more than one row
-#   filter(n() == 8) %>%
-#   filter(row_number() == 1) %>%
-#   ungroup() %>%
-#   { 
-#     cat("Number of infectious periods with eight positive tests:", nrow(.), "\n")
-#     cat("Pathogen:", pathgs[unique(.$pathogen)], "\n")
-#   }
-# 
-# ## All infectious period of length 6 positive tests #---------------------------
-# infectious_periods_IC %>%
-#   group_by(infectious_period) %>%
-#   # Filter for groups containing more than one row
-#   filter(n() >= 6) %>%
-#   filter(row_number() == 1) %>%
-#   ungroup() %>%
-#   { 
-#     cat("Number of infectious periods with seven positive tests:", nrow(.), "\n")
-#     cat("Pathogen:", pathgs[(.$pathogen)], "\n")
-#   }
-
-## All coinfectious periods #----------------------------------------
-# Number of coninfections
-infections_imp %>%
-  filter(!is.na(pathogen)) %>%
-  group_by(infection_id) %>%
-  slice(1) %>%
-  ungroup() %>%
-  group_by(student_id) %>%
-  filter(n() > 1) %>%
-  # For each student, count the number of coinfections
-  # For all pairwise rows, check whether date_first_sample or date_last_sample is
-  # within the interval of the other row
-
-
-# Number of coinfections
-infectious_periods_IC %>%
-  group_by(student_id, time_id) %>%
-  filter(n() > 1) %>%
-  ungroup() %>%
-  pull(student_id) %>%
-  unique() %>%
-  length()
-
-# Display coinfections
-infectious_periods_IC %>%
-  group_by(student_id, time_id) %>%
-  filter(n() > 1) %>%
-  ungroup() %>%
-  dplyr::select(student_id, time_id, pathogen) %>%
-  distinct() %>%
-  arrange(student_id, time_id)
+## Number of infectious periods with only one positive test 
+## -----------------------------------------------------------------------------
+# Coinfections
+coinf
 
 # Infectious episodes by class
 infectious_periods_IC %>%
